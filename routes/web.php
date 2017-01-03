@@ -14,3 +14,11 @@
 Route::get('/', function () {
     return view('welcome');
 });
+
+Auth::routes();
+
+Route::get('/home', 'HomeController@index');
+
+Route::get('/feed', 'UserPost@index');
+Route::get('/feed/{id}/edit', 'UserPost@edit');
+Route::delete('feed/{id}', 'UserPost@destroy');
