@@ -10,14 +10,19 @@
         {{ Html::script('vendor/core-js/client/shim.min.js') }}
         {{ Html::script('vendor/zone.js/dist/zone.js') }}
         {{ Html::script('vendor/reflect-metadata/Reflect.js') }}
-        {{ Html::script('vendor/systemjs/dist/system.src.js') }}
-        {{ Html::script('systemjs.config.js') }}
 
-        <script>
+        {{-- {{ Html::script('vendor/systemjs/dist/system.src.js') }} --}}
+        {{-- {{ Html::script('systemjs.config.js') }} --}}
+        {{-- <script>
             System.import('app').catch(function(err){ console.error(err); });
-        </script>
+        </script> --}}
+
     </head>
     <body>
+
         <my-app>Loading...</my-app>
+
+        {{ Html::script('js/bundle.js') }}
+        
     </body>
 </html>
