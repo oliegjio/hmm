@@ -35386,7 +35386,8 @@
 	AppComponent = __decorate([
 	    core_1.Component({
 	        selector: 'my-app',
-	        template: '<h1>Hmm... Project</h1>'
+	        template: '<h1>Hmm... Project</h1>',
+	        styleUrls: ['css/app.css']
 	    }),
 	    __metadata("design:paramtypes", [])
 	], AppComponent);

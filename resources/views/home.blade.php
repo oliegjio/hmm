@@ -1,17 +1,22 @@
-@extends('layouts.app')
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
 
-@section('content')
-<div class="container">
-    <div class="row">
-        <div class="col-md-8 col-md-offset-2">
-            <div class="panel panel-default">
-                <div class="panel-heading">Dashboard</div>
+        <title>Laravel 5.3 - Angular 2</title>
 
-                <div class="panel-body">
-                    You are logged in!
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-@endsection
+        {{ Html::script('vendor/core-js/client/shim.min.js') }}
+        {{ Html::script('vendor/zone.js/dist/zone.js') }}
+        {{ Html::script('vendor/reflect-metadata/Reflect.js') }}
+
+    </head>
+    <body>
+
+        <my-app>Loading...</my-app>
+
+        {{ Html::script('js/bundle.js') }}
+        
+    </body>
+</html>
