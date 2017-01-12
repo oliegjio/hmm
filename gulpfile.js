@@ -1,7 +1,7 @@
-const elixir = require('laravel-elixir');
+const elixir = require('laravel-elixir')
 
-require('laravel-elixir-vue-2');
-require('elixir-typescript');
+require('laravel-elixir-vue-2')
+require('elixir-typescript')
 
 
 /*
@@ -15,6 +15,14 @@ require('elixir-typescript');
  |
  */
 
+process.env.DISABLE_NOTIFIER = true
+
 elixir(mix => {
-    mix.sass('app.scss');
+    let css = 'public/css/'
+    mix.sass('global.scss', css + 'global.css')
+});
+
+gulp.task('init', () => {
+    gulp.src('node_modules/font-awesome/fonts/*')
+        .pipe(gulp.dest('public/fonts/font-awesome/'))
 });

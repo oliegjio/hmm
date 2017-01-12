@@ -1,0 +1,14 @@
+@import '../../../node_modules/bourbon/app/assets/stylesheets/_bourbon';
+@import '../../../node_modules/flexboxgrid/dist/flexboxgrid.min';
+@import '../../../node_modules/font-awesome/css/font-awesome.min';
+
+@include font-face('FontAwesome', '../fonts/font-awesome/fontawesome-webfont');
+
+html, body, input {
+    font-family: Arial;
+}
+
+* {
+    padding: 0;
+    margin: 0;
+}

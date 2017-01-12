@@ -44,11 +44,12 @@
 /* 0 */
 /***/ function(module, exports, __webpack_require__) {
 
+	/// <reference path="../../../typings/index.d.ts" />
 	"use strict";
 	var platform_browser_dynamic_1 = __webpack_require__(1);
-	var app_module_1 = __webpack_require__(23);
+	var application_module_1 = __webpack_require__(23);
 	var platform = platform_browser_dynamic_1.platformBrowserDynamic();
-	platform.bootstrapModule(app_module_1.AppModule);
+	platform.bootstrapModule(application_module_1.ApplicationModule);
 
 
 /***/ },
@@ -35333,7 +35334,6 @@
 /* 23 */
 /***/ function(module, exports, __webpack_require__) {
 
-	///<reference path="../../../typings/index.d.ts"/>
 	"use strict";
 	var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
 	    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -35346,21 +35346,25 @@
 	};
 	var core_1 = __webpack_require__(3);
 	var platform_browser_1 = __webpack_require__(21);
-	var app_component_1 = __webpack_require__(24);
-	var AppModule = (function () {
-	    function AppModule() {
+	var application_component_1 = __webpack_require__(24);
+	var header_component_1 = __webpack_require__(25);
+	var ApplicationModule = (function () {
+	    function ApplicationModule() {
 	    }
-	    return AppModule;
+	    return ApplicationModule;
 	}());
-	AppModule = __decorate([
+	ApplicationModule = __decorate([
 	    core_1.NgModule({
 	        imports: [platform_browser_1.BrowserModule],
-	        declarations: [app_component_1.AppComponent],
-	        bootstrap: [app_component_1.AppComponent]
+	        declarations: [
+	            application_component_1.ApplicationComponent,
+	            header_component_1.HeaderComponent
+	        ],
+	        bootstrap: [application_component_1.ApplicationComponent]
 	    }),
 	    __metadata("design:paramtypes", [])
-	], AppModule);
-	exports.AppModule = AppModule;
+	], ApplicationModule);
+	exports.ApplicationModule = ApplicationModule;
 
 
 /***/ },
@@ -35378,20 +35382,70 @@
 	    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 	};
 	var core_1 = __webpack_require__(3);
-	var AppComponent = (function () {
-	    function AppComponent() {
+	var ApplicationComponent = (function () {
+	    function ApplicationComponent() {
 	    }
-	    return AppComponent;
+	    return ApplicationComponent;
 	}());
-	AppComponent = __decorate([
+	ApplicationComponent = __decorate([
 	    core_1.Component({
-	        selector: 'my-app',
-	        template: '<h1>Hmm... Project</h1>',
-	        styleUrls: ['css/app.css']
+	        selector: 'application',
+	        template: "\n        <header-component></header-component>\n    ",
+	        styles: ["\n    "]
 	    }),
 	    __metadata("design:paramtypes", [])
-	], AppComponent);
-	exports.AppComponent = AppComponent;
+	], ApplicationComponent);
+	exports.ApplicationComponent = ApplicationComponent;
+
+
+/***/ },
+/* 25 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+	    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+	    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+	    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+	    return c > 3 && r && Object.defineProperty(target, key, r), r;
+	};
+	var __metadata = (this && this.__metadata) || function (k, v) {
+	    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+	};
+	var core_1 = __webpack_require__(3);
+	var meta_1 = __webpack_require__(26);
+	var HeaderComponent = (function () {
+	    function HeaderComponent() {
+	        this.componentName = 'HeaderComponent';
+	    }
+	    return HeaderComponent;
+	}());
+	HeaderComponent = __decorate([
+	    core_1.Component({
+	        selector: 'header-component',
+	        template: "\n        <div class=\"header row center-xs\">\n            <div class=\"header__offset row\">\n                <div class=\"col-xs-3 row start-xs middle-xs\">\n                    <img class=\"header__logo\" src=\"images/logo.png\" alt=\"" + meta_1.Meta.logoText + "\" />\n                </div>\n                <div class=\"col-xs-6 row start-xs middle-xs\">\n                    <i class=\"header__search-icon fa fa-search\" aria-hidden=\"true\"></i>\n                    <input type=\"text\" class=\"header__search-bar\" placeholder=\"Search...\">\n                </div>\n                <div class=\"col-xs-3 row start-xs\">\n                    \n                </div>\n            </div>\n        </div>\n    ",
+	        styles: ["\n        .header {\n            background-color: #" + meta_1.Meta.primaryColor + ";\n            height: 60px;\n            width: 100%;\n            margin: 0 !important;\n        }\n        .header__offset {\n            height: 100%;\n            width: " + meta_1.Meta.mainColumnWidth + "px;\n        }\n        .header__logo {\n            height: 18px;\n        }\n        .header__search-icon {\n            font-size: 23px;\n            color: white;\n        }\n        .header__search-bar {\n            border: none;\n            border-radius: 100px;\n            height: 35px;\n            margin-left: 15px;\n            color: white;\n            padding-left: 15px;\n            background-color: #" + meta_1.Meta.primaryColorLight + ";\n        }\n        .header__search-bar::-webkit-input-placeholder {\n            color: white;\n        }\n        .header__search-bar:focus {\n            background-color: white;\n            color: #" + meta_1.Meta.primaryColor + ";\n            outline: none;\n        }\n    "]
+	    }),
+	    __metadata("design:paramtypes", [])
+	], HeaderComponent);
+	exports.HeaderComponent = HeaderComponent;
+
+
+/***/ },
+/* 26 */
+/***/ function(module, exports) {
+
+	"use strict";
+	var Meta = (function () {
+	    function Meta() {
+	    }
+	    return Meta;
+	}());
+	Meta.primaryColor = 'F57F62';
+	Meta.primaryColorLight = 'F5937A';
+	Meta.mainColumnWidth = 1000;
+	Meta.logoText = 'Hmm...';
+	exports.Meta = Meta;
 
 
 /***/ }
