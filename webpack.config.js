@@ -1,3 +1,5 @@
+const path = require('path')
+
 module.exports = {
     entry: "resources/assets/typescript/main.ts",
     output: {
@@ -38,7 +40,7 @@ module.exports = {
     
     resolve: {
         root: [
-            '/opt/lampp/htdocs/hmm'
+            require('path').resolve('./')
         ],
         extensions: ['', '.js', '.ts'],
         moduleDirectories: ['node_modules']

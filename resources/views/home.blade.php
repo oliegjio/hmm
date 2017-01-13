@@ -7,10 +7,6 @@
 
         <title>Hmm...</title>
 
-        {{ Html::script('vendor/core-js/client/shim.min.js') }}
-        {{ Html::script('vendor/zone.js/dist/zone.js') }}
-        {{ Html::script('vendor/reflect-metadata/Reflect.js') }}
-
     </head>
     <body>
 
