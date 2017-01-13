@@ -11,8 +11,6 @@
         {{ Html::script('vendor/zone.js/dist/zone.js') }}
         {{ Html::script('vendor/reflect-metadata/Reflect.js') }}
 
-        {{ Html::style('css/global.css') }}
-
     </head>
     <body>
 

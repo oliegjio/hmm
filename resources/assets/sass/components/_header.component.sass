@@ -1,0 +1,48 @@
+@import '../setup/_variables'
+
+$_header-component__height: 60px
+$_header-component__icons--size: 23px
+$_header-component__icons--color: white
+
+.header
+    background-color: $color__primary
+    height: $_header-component__height
+    width: 100%
+    margin: 0 !important
+.header__offset
+    height: 100%
+    width: $main-column__width
+.header__logo
+    height: 18px
+.header__search-icon
+    font-size: $_header-component__icons--size
+    color: $_header-component__icons--color
+.header__search-bar
+    border: none
+    border-radius: 100px
+    height: 35px
+    margin: 0 10px 0 10px
+    color: white
+    padding-left: 15px
+    background-color: $color__primary--light
+.header__search-bar::-webkit-input-placeholder
+    color: white
+.header__search-bar:focus
+    background-color: white
+    color: $color__primary--light
+    outline: none
+.header__action-buttons
+    margin-left: 10px
+    color: $_header-component__icons--color
+    font-size: $_header-component__icons--size
+    height: 100%
+    line-height: $_header-component__height
+    width: $_header-component__height
+    text-align: center
+.header__action-buttons:hover
+    background-color: $color__primary--light
+.header__profile-button
+    padding: 0 10px
+.header__profile-button:hover
+    background-color: $color__primary--light
+.header__avatar
