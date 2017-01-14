@@ -1,0 +1,29 @@
+@import '../setup/_variables'
+@import '../setup/_mixins'
+
+$_navigation-menu__icon--size: 19px
+
+.navigation-menu
+    +element('link')
+        color: $color__primary--dark
+        text-decoration: none
+        display: block
+        padding: 5px
+        height: $_navigation-menu__icon--size
+        border-radius: 5px
+        width: 80%
+        &:hover
+            background-color: #F8F8F8
+    +element('link-icon')
+        font-size: $_navigation-menu__icon--size
+        color: $color__primary--light
+        float: left
+    +element('link-text')
+        font-family: Roboto-Light
+        line-height: $_navigation-menu__icon--size
+        margin-left: 40px
+    +element('list-element')
+        margin: 5px 0
+    +element('list')
+        list-style: none
+        margin-top: 30px
