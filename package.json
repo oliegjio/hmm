@@ -1,7 +1,7 @@
 {
   "private": true,
   "scripts": {
-    "run": "concurrently \"webpack --watch\" \"gulp watch\""
+    "run": "wepack --watch"
   },
   "dependencies": {
     "@angular/common": "2.0.0",
@@ -26,7 +26,6 @@
   },
   "devDependencies": {
     "awesome-typescript-loader": "^3.0.0-beta.17",
-    "concurrently": "^3.1.0",
     "gulp": "^3.9.1",
     "jade": "^1.11.0",
     "jade-html-loader": "0.0.3",

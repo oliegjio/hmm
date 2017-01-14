@@ -46,11 +46,11 @@
 
 	/// <reference path="../../../typings/index.d.ts" />
 	"use strict";
-	__webpack_require__(29);
-	__webpack_require__(34);
-	__webpack_require__(35);
-	var platform_browser_dynamic_1 = __webpack_require__(1);
-	var application_module_1 = __webpack_require__(23);
+	__webpack_require__(1);
+	__webpack_require__(6);
+	__webpack_require__(7);
+	var platform_browser_dynamic_1 = __webpack_require__(8);
+	var application_module_1 = __webpack_require__(30);
 	var platform = platform_browser_dynamic_1.platformBrowserDynamic();
 	platform.bootstrapModule(application_module_1.ApplicationModule);
 
@@ -59,13 +59,4032 @@
 /* 1 */
 /***/ function(module, exports, __webpack_require__) {
 
+	/* WEBPACK VAR INJECTION */(function(process) {// Copyright Joyent, Inc. and other Node contributors.
+	//
+	// Permission is hereby granted, free of charge, to any person obtaining a
+	// copy of this software and associated documentation files (the
+	// "Software"), to deal in the Software without restriction, including
+	// without limitation the rights to use, copy, modify, merge, publish,
+	// distribute, sublicense, and/or sell copies of the Software, and to permit
+	// persons to whom the Software is furnished to do so, subject to the
+	// following conditions:
+	//
+	// The above copyright notice and this permission notice shall be included
+	// in all copies or substantial portions of the Software.
+	//
+	// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+	// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+	// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+	// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+	// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+	// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+	// USE OR OTHER DEALINGS IN THE SOFTWARE.
+	
+	'use strict';
+	
+	
+	var isWindows = process.platform === 'win32';
+	var util = __webpack_require__(3);
+	
+	
+	// resolves . and .. elements in a path array with directory names there
+	// must be no slashes or device names (c:\) in the array
+	// (so also no leading and trailing slashes - it does not distinguish
+	// relative and absolute paths)
+	function normalizeArray(parts, allowAboveRoot) {
+	  var res = [];
+	  for (var i = 0; i < parts.length; i++) {
+	    var p = parts[i];
+	
+	    // ignore empty parts
+	    if (!p || p === '.')
+	      continue;
+	
+	    if (p === '..') {
+	      if (res.length && res[res.length - 1] !== '..') {
+	        res.pop();
+	      } else if (allowAboveRoot) {
+	        res.push('..');
+	      }
+	    } else {
+	      res.push(p);
+	    }
+	  }
+	
+	  return res;
+	}
+	
+	// returns an array with empty elements removed from either end of the input
+	// array or the original array if no elements need to be removed
+	function trimArray(arr) {
+	  var lastIndex = arr.length - 1;
+	  var start = 0;
+	  for (; start <= lastIndex; start++) {
+	    if (arr[start])
+	      break;
+	  }
+	
+	  var end = lastIndex;
+	  for (; end >= 0; end--) {
+	    if (arr[end])
+	      break;
+	  }
+	
+	  if (start === 0 && end === lastIndex)
+	    return arr;
+	  if (start > end)
+	    return [];
+	  return arr.slice(start, end + 1);
+	}
+	
+	// Regex to split a windows path into three parts: [*, device, slash,
+	// tail] windows-only
+	var splitDeviceRe =
+	    /^([a-zA-Z]:|[\\\/]{2}[^\\\/]+[\\\/]+[^\\\/]+)?([\\\/])?([\s\S]*?)$/;
+	
+	// Regex to split the tail part of the above into [*, dir, basename, ext]
+	var splitTailRe =
+	    /^([\s\S]*?)((?:\.{1,2}|[^\\\/]+?|)(\.[^.\/\\]*|))(?:[\\\/]*)$/;
+	
+	var win32 = {};
+	
+	// Function to split a filename into [root, dir, basename, ext]
+	function win32SplitPath(filename) {
+	  // Separate device+slash from tail
+	  var result = splitDeviceRe.exec(filename),
+	      device = (result[1] || '') + (result[2] || ''),
+	      tail = result[3] || '';
+	  // Split the tail into dir, basename and extension
+	  var result2 = splitTailRe.exec(tail),
+	      dir = result2[1],
+	      basename = result2[2],
+	      ext = result2[3];
+	  return [device, dir, basename, ext];
+	}
+	
+	function win32StatPath(path) {
+	  var result = splitDeviceRe.exec(path),
+	      device = result[1] || '',
+	      isUnc = !!device && device[1] !== ':';
+	  return {
+	    device: device,
+	    isUnc: isUnc,
+	    isAbsolute: isUnc || !!result[2], // UNC paths are always absolute
+	    tail: result[3]
+	  };
+	}
+	
+	function normalizeUNCRoot(device) {
+	  return '\\\\' + device.replace(/^[\\\/]+/, '').replace(/[\\\/]+/g, '\\');
+	}
+	
+	// path.resolve([from ...], to)
+	win32.resolve = function() {
+	  var resolvedDevice = '',
+	      resolvedTail = '',
+	      resolvedAbsolute = false;
+	
+	  for (var i = arguments.length - 1; i >= -1; i--) {
+	    var path;
+	    if (i >= 0) {
+	      path = arguments[i];
+	    } else if (!resolvedDevice) {
+	      path = process.cwd();
+	    } else {
+	      // Windows has the concept of drive-specific current working
+	      // directories. If we've resolved a drive letter but not yet an
+	      // absolute path, get cwd for that drive. We're sure the device is not
+	      // an unc path at this points, because unc paths are always absolute.
+	      path = process.env['=' + resolvedDevice];
+	      // Verify that a drive-local cwd was found and that it actually points
+	      // to our drive. If not, default to the drive's root.
+	      if (!path || path.substr(0, 3).toLowerCase() !==
+	          resolvedDevice.toLowerCase() + '\\') {
+	        path = resolvedDevice + '\\';
+	      }
+	    }
+	
+	    // Skip empty and invalid entries
+	    if (!util.isString(path)) {
+	      throw new TypeError('Arguments to path.resolve must be strings');
+	    } else if (!path) {
+	      continue;
+	    }
+	
+	    var result = win32StatPath(path),
+	        device = result.device,
+	        isUnc = result.isUnc,
+	        isAbsolute = result.isAbsolute,
+	        tail = result.tail;
+	
+	    if (device &&
+	        resolvedDevice &&
+	        device.toLowerCase() !== resolvedDevice.toLowerCase()) {
+	      // This path points to another device so it is not applicable
+	      continue;
+	    }
+	
+	    if (!resolvedDevice) {
+	      resolvedDevice = device;
+	    }
+	    if (!resolvedAbsolute) {
+	      resolvedTail = tail + '\\' + resolvedTail;
+	      resolvedAbsolute = isAbsolute;
+	    }
+	
+	    if (resolvedDevice && resolvedAbsolute) {
+	      break;
+	    }
+	  }
+	
+	  // Convert slashes to backslashes when `resolvedDevice` points to an UNC
+	  // root. Also squash multiple slashes into a single one where appropriate.
+	  if (isUnc) {
+	    resolvedDevice = normalizeUNCRoot(resolvedDevice);
+	  }
+	
+	  // At this point the path should be resolved to a full absolute path,
+	  // but handle relative paths to be safe (might happen when process.cwd()
+	  // fails)
+	
+	  // Normalize the tail path
+	  resolvedTail = normalizeArray(resolvedTail.split(/[\\\/]+/),
+	                                !resolvedAbsolute).join('\\');
+	
+	  return (resolvedDevice + (resolvedAbsolute ? '\\' : '') + resolvedTail) ||
+	         '.';
+	};
+	
+	
+	win32.normalize = function(path) {
+	  var result = win32StatPath(path),
+	      device = result.device,
+	      isUnc = result.isUnc,
+	      isAbsolute = result.isAbsolute,
+	      tail = result.tail,
+	      trailingSlash = /[\\\/]$/.test(tail);
+	
+	  // Normalize the tail path
+	  tail = normalizeArray(tail.split(/[\\\/]+/), !isAbsolute).join('\\');
+	
+	  if (!tail && !isAbsolute) {
+	    tail = '.';
+	  }
+	  if (tail && trailingSlash) {
+	    tail += '\\';
+	  }
+	
+	  // Convert slashes to backslashes when `device` points to an UNC root.
+	  // Also squash multiple slashes into a single one where appropriate.
+	  if (isUnc) {
+	    device = normalizeUNCRoot(device);
+	  }
+	
+	  return device + (isAbsolute ? '\\' : '') + tail;
+	};
+	
+	
+	win32.isAbsolute = function(path) {
+	  return win32StatPath(path).isAbsolute;
+	};
+	
+	win32.join = function() {
+	  var paths = [];
+	  for (var i = 0; i < arguments.length; i++) {
+	    var arg = arguments[i];
+	    if (!util.isString(arg)) {
+	      throw new TypeError('Arguments to path.join must be strings');
+	    }
+	    if (arg) {
+	      paths.push(arg);
+	    }
+	  }
+	
+	  var joined = paths.join('\\');
+	
+	  // Make sure that the joined path doesn't start with two slashes, because
+	  // normalize() will mistake it for an UNC path then.
+	  //
+	  // This step is skipped when it is very clear that the user actually
+	  // intended to point at an UNC path. This is assumed when the first
+	  // non-empty string arguments starts with exactly two slashes followed by
+	  // at least one more non-slash character.
+	  //
+	  // Note that for normalize() to treat a path as an UNC path it needs to
+	  // have at least 2 components, so we don't filter for that here.
+	  // This means that the user can use join to construct UNC paths from
+	  // a server name and a share name; for example:
+	  //   path.join('//server', 'share') -> '\\\\server\\share\')
+	  if (!/^[\\\/]{2}[^\\\/]/.test(paths[0])) {
+	    joined = joined.replace(/^[\\\/]{2,}/, '\\');
+	  }
+	
+	  return win32.normalize(joined);
+	};
+	
+	
+	// path.relative(from, to)
+	// it will solve the relative path from 'from' to 'to', for instance:
+	// from = 'C:\\orandea\\test\\aaa'
+	// to = 'C:\\orandea\\impl\\bbb'
+	// The output of the function should be: '..\\..\\impl\\bbb'
+	win32.relative = function(from, to) {
+	  from = win32.resolve(from);
+	  to = win32.resolve(to);
+	
+	  // windows is not case sensitive
+	  var lowerFrom = from.toLowerCase();
+	  var lowerTo = to.toLowerCase();
+	
+	  var toParts = trimArray(to.split('\\'));
+	
+	  var lowerFromParts = trimArray(lowerFrom.split('\\'));
+	  var lowerToParts = trimArray(lowerTo.split('\\'));
+	
+	  var length = Math.min(lowerFromParts.length, lowerToParts.length);
+	  var samePartsLength = length;
+	  for (var i = 0; i < length; i++) {
+	    if (lowerFromParts[i] !== lowerToParts[i]) {
+	      samePartsLength = i;
+	      break;
+	    }
+	  }
+	
+	  if (samePartsLength == 0) {
+	    return to;
+	  }
+	
+	  var outputParts = [];
+	  for (var i = samePartsLength; i < lowerFromParts.length; i++) {
+	    outputParts.push('..');
+	  }
+	
+	  outputParts = outputParts.concat(toParts.slice(samePartsLength));
+	
+	  return outputParts.join('\\');
+	};
+	
+	
+	win32._makeLong = function(path) {
+	  // Note: this will *probably* throw somewhere.
+	  if (!util.isString(path))
+	    return path;
+	
+	  if (!path) {
+	    return '';
+	  }
+	
+	  var resolvedPath = win32.resolve(path);
+	
+	  if (/^[a-zA-Z]\:\\/.test(resolvedPath)) {
+	    // path is local filesystem path, which needs to be converted
+	    // to long UNC path.
+	    return '\\\\?\\' + resolvedPath;
+	  } else if (/^\\\\[^?.]/.test(resolvedPath)) {
+	    // path is network UNC path, which needs to be converted
+	    // to long UNC path.
+	    return '\\\\?\\UNC\\' + resolvedPath.substring(2);
+	  }
+	
+	  return path;
+	};
+	
+	
+	win32.dirname = function(path) {
+	  var result = win32SplitPath(path),
+	      root = result[0],
+	      dir = result[1];
+	
+	  if (!root && !dir) {
+	    // No dirname whatsoever
+	    return '.';
+	  }
+	
+	  if (dir) {
+	    // It has a dirname, strip trailing slash
+	    dir = dir.substr(0, dir.length - 1);
+	  }
+	
+	  return root + dir;
+	};
+	
+	
+	win32.basename = function(path, ext) {
+	  var f = win32SplitPath(path)[2];
+	  // TODO: make this comparison case-insensitive on windows?
+	  if (ext && f.substr(-1 * ext.length) === ext) {
+	    f = f.substr(0, f.length - ext.length);
+	  }
+	  return f;
+	};
+	
+	
+	win32.extname = function(path) {
+	  return win32SplitPath(path)[3];
+	};
+	
+	
+	win32.format = function(pathObject) {
+	  if (!util.isObject(pathObject)) {
+	    throw new TypeError(
+	        "Parameter 'pathObject' must be an object, not " + typeof pathObject
+	    );
+	  }
+	
+	  var root = pathObject.root || '';
+	
+	  if (!util.isString(root)) {
+	    throw new TypeError(
+	        "'pathObject.root' must be a string or undefined, not " +
+	        typeof pathObject.root
+	    );
+	  }
+	
+	  var dir = pathObject.dir;
+	  var base = pathObject.base || '';
+	  if (!dir) {
+	    return base;
+	  }
+	  if (dir[dir.length - 1] === win32.sep) {
+	    return dir + base;
+	  }
+	  return dir + win32.sep + base;
+	};
+	
+	
+	win32.parse = function(pathString) {
+	  if (!util.isString(pathString)) {
+	    throw new TypeError(
+	        "Parameter 'pathString' must be a string, not " + typeof pathString
+	    );
+	  }
+	  var allParts = win32SplitPath(pathString);
+	  if (!allParts || allParts.length !== 4) {
+	    throw new TypeError("Invalid path '" + pathString + "'");
+	  }
+	  return {
+	    root: allParts[0],
+	    dir: allParts[0] + allParts[1].slice(0, -1),
+	    base: allParts[2],
+	    ext: allParts[3],
+	    name: allParts[2].slice(0, allParts[2].length - allParts[3].length)
+	  };
+	};
+	
+	
+	win32.sep = '\\';
+	win32.delimiter = ';';
+	
+	
+	// Split a filename into [root, dir, basename, ext], unix version
+	// 'root' is just a slash, or nothing.
+	var splitPathRe =
+	    /^(\/?|)([\s\S]*?)((?:\.{1,2}|[^\/]+?|)(\.[^.\/]*|))(?:[\/]*)$/;
+	var posix = {};
+	
+	
+	function posixSplitPath(filename) {
+	  return splitPathRe.exec(filename).slice(1);
+	}
+	
+	
+	// path.resolve([from ...], to)
+	// posix version
+	posix.resolve = function() {
+	  var resolvedPath = '',
+	      resolvedAbsolute = false;
+	
+	  for (var i = arguments.length - 1; i >= -1 && !resolvedAbsolute; i--) {
+	    var path = (i >= 0) ? arguments[i] : process.cwd();
+	
+	    // Skip empty and invalid entries
+	    if (!util.isString(path)) {
+	      throw new TypeError('Arguments to path.resolve must be strings');
+	    } else if (!path) {
+	      continue;
+	    }
+	
+	    resolvedPath = path + '/' + resolvedPath;
+	    resolvedAbsolute = path[0] === '/';
+	  }
+	
+	  // At this point the path should be resolved to a full absolute path, but
+	  // handle relative paths to be safe (might happen when process.cwd() fails)
+	
+	  // Normalize the path
+	  resolvedPath = normalizeArray(resolvedPath.split('/'),
+	                                !resolvedAbsolute).join('/');
+	
+	  return ((resolvedAbsolute ? '/' : '') + resolvedPath) || '.';
+	};
+	
+	// path.normalize(path)
+	// posix version
+	posix.normalize = function(path) {
+	  var isAbsolute = posix.isAbsolute(path),
+	      trailingSlash = path && path[path.length - 1] === '/';
+	
+	  // Normalize the path
+	  path = normalizeArray(path.split('/'), !isAbsolute).join('/');
+	
+	  if (!path && !isAbsolute) {
+	    path = '.';
+	  }
+	  if (path && trailingSlash) {
+	    path += '/';
+	  }
+	
+	  return (isAbsolute ? '/' : '') + path;
+	};
+	
+	// posix version
+	posix.isAbsolute = function(path) {
+	  return path.charAt(0) === '/';
+	};
+	
+	// posix version
+	posix.join = function() {
+	  var path = '';
+	  for (var i = 0; i < arguments.length; i++) {
+	    var segment = arguments[i];
+	    if (!util.isString(segment)) {
+	      throw new TypeError('Arguments to path.join must be strings');
+	    }
+	    if (segment) {
+	      if (!path) {
+	        path += segment;
+	      } else {
+	        path += '/' + segment;
+	      }
+	    }
+	  }
+	  return posix.normalize(path);
+	};
+	
+	
+	// path.relative(from, to)
+	// posix version
+	posix.relative = function(from, to) {
+	  from = posix.resolve(from).substr(1);
+	  to = posix.resolve(to).substr(1);
+	
+	  var fromParts = trimArray(from.split('/'));
+	  var toParts = trimArray(to.split('/'));
+	
+	  var length = Math.min(fromParts.length, toParts.length);
+	  var samePartsLength = length;
+	  for (var i = 0; i < length; i++) {
+	    if (fromParts[i] !== toParts[i]) {
+	      samePartsLength = i;
+	      break;
+	    }
+	  }
+	
+	  var outputParts = [];
+	  for (var i = samePartsLength; i < fromParts.length; i++) {
+	    outputParts.push('..');
+	  }
+	
+	  outputParts = outputParts.concat(toParts.slice(samePartsLength));
+	
+	  return outputParts.join('/');
+	};
+	
+	
+	posix._makeLong = function(path) {
+	  return path;
+	};
+	
+	
+	posix.dirname = function(path) {
+	  var result = posixSplitPath(path),
+	      root = result[0],
+	      dir = result[1];
+	
+	  if (!root && !dir) {
+	    // No dirname whatsoever
+	    return '.';
+	  }
+	
+	  if (dir) {
+	    // It has a dirname, strip trailing slash
+	    dir = dir.substr(0, dir.length - 1);
+	  }
+	
+	  return root + dir;
+	};
+	
+	
+	posix.basename = function(path, ext) {
+	  var f = posixSplitPath(path)[2];
+	  // TODO: make this comparison case-insensitive on windows?
+	  if (ext && f.substr(-1 * ext.length) === ext) {
+	    f = f.substr(0, f.length - ext.length);
+	  }
+	  return f;
+	};
+	
+	
+	posix.extname = function(path) {
+	  return posixSplitPath(path)[3];
+	};
+	
+	
+	posix.format = function(pathObject) {
+	  if (!util.isObject(pathObject)) {
+	    throw new TypeError(
+	        "Parameter 'pathObject' must be an object, not " + typeof pathObject
+	    );
+	  }
+	
+	  var root = pathObject.root || '';
+	
+	  if (!util.isString(root)) {
+	    throw new TypeError(
+	        "'pathObject.root' must be a string or undefined, not " +
+	        typeof pathObject.root
+	    );
+	  }
+	
+	  var dir = pathObject.dir ? pathObject.dir + posix.sep : '';
+	  var base = pathObject.base || '';
+	  return dir + base;
+	};
+	
+	
+	posix.parse = function(pathString) {
+	  if (!util.isString(pathString)) {
+	    throw new TypeError(
+	        "Parameter 'pathString' must be a string, not " + typeof pathString
+	    );
+	  }
+	  var allParts = posixSplitPath(pathString);
+	  if (!allParts || allParts.length !== 4) {
+	    throw new TypeError("Invalid path '" + pathString + "'");
+	  }
+	  allParts[1] = allParts[1] || '';
+	  allParts[2] = allParts[2] || '';
+	  allParts[3] = allParts[3] || '';
+	
+	  return {
+	    root: allParts[0],
+	    dir: allParts[0] + allParts[1].slice(0, -1),
+	    base: allParts[2],
+	    ext: allParts[3],
+	    name: allParts[2].slice(0, allParts[2].length - allParts[3].length)
+	  };
+	};
+	
+	
+	posix.sep = '/';
+	posix.delimiter = ':';
+	
+	
+	if (isWindows)
+	  module.exports = win32;
+	else /* posix */
+	  module.exports = posix;
+	
+	module.exports.posix = posix;
+	module.exports.win32 = win32;
+	
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(2)))
+
+/***/ },
+/* 2 */
+/***/ function(module, exports) {
+
+	// shim for using process in browser
+	var process = module.exports = {};
+	
+	// cached from whatever global is present so that test runners that stub it
+	// don't break things.  But we need to wrap it in a try catch in case it is
+	// wrapped in strict mode code which doesn't define any globals.  It's inside a
+	// function because try/catches deoptimize in certain engines.
+	
+	var cachedSetTimeout;
+	var cachedClearTimeout;
+	
+	function defaultSetTimout() {
+	    throw new Error('setTimeout has not been defined');
+	}
+	function defaultClearTimeout () {
+	    throw new Error('clearTimeout has not been defined');
+	}
+	(function () {
+	    try {
+	        if (typeof setTimeout === 'function') {
+	            cachedSetTimeout = setTimeout;
+	        } else {
+	            cachedSetTimeout = defaultSetTimout;
+	        }
+	    } catch (e) {
+	        cachedSetTimeout = defaultSetTimout;
+	    }
+	    try {
+	        if (typeof clearTimeout === 'function') {
+	            cachedClearTimeout = clearTimeout;
+	        } else {
+	            cachedClearTimeout = defaultClearTimeout;
+	        }
+	    } catch (e) {
+	        cachedClearTimeout = defaultClearTimeout;
+	    }
+	} ())
+	function runTimeout(fun) {
+	    if (cachedSetTimeout === setTimeout) {
+	        //normal enviroments in sane situations
+	        return setTimeout(fun, 0);
+	    }
+	    // if setTimeout wasn't available but was latter defined
+	    if ((cachedSetTimeout === defaultSetTimout || !cachedSetTimeout) && setTimeout) {
+	        cachedSetTimeout = setTimeout;
+	        return setTimeout(fun, 0);
+	    }
+	    try {
+	        // when when somebody has screwed with setTimeout but no I.E. maddness
+	        return cachedSetTimeout(fun, 0);
+	    } catch(e){
+	        try {
+	            // When we are in I.E. but the script has been evaled so I.E. doesn't trust the global object when called normally
+	            return cachedSetTimeout.call(null, fun, 0);
+	        } catch(e){
+	            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error
+	            return cachedSetTimeout.call(this, fun, 0);
+	        }
+	    }
+	
+	
+	}
+	function runClearTimeout(marker) {
+	    if (cachedClearTimeout === clearTimeout) {
+	        //normal enviroments in sane situations
+	        return clearTimeout(marker);
+	    }
+	    // if clearTimeout wasn't available but was latter defined
+	    if ((cachedClearTimeout === defaultClearTimeout || !cachedClearTimeout) && clearTimeout) {
+	        cachedClearTimeout = clearTimeout;
+	        return clearTimeout(marker);
+	    }
+	    try {
+	        // when when somebody has screwed with setTimeout but no I.E. maddness
+	        return cachedClearTimeout(marker);
+	    } catch (e){
+	        try {
+	            // When we are in I.E. but the script has been evaled so I.E. doesn't  trust the global object when called normally
+	            return cachedClearTimeout.call(null, marker);
+	        } catch (e){
+	            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error.
+	            // Some versions of I.E. have different rules for clearTimeout vs setTimeout
+	            return cachedClearTimeout.call(this, marker);
+	        }
+	    }
+	
+	
+	
+	}
+	var queue = [];
+	var draining = false;
+	var currentQueue;
+	var queueIndex = -1;
+	
+	function cleanUpNextTick() {
+	    if (!draining || !currentQueue) {
+	        return;
+	    }
+	    draining = false;
+	    if (currentQueue.length) {
+	        queue = currentQueue.concat(queue);
+	    } else {
+	        queueIndex = -1;
+	    }
+	    if (queue.length) {
+	        drainQueue();
+	    }
+	}
+	
+	function drainQueue() {
+	    if (draining) {
+	        return;
+	    }
+	    var timeout = runTimeout(cleanUpNextTick);
+	    draining = true;
+	
+	    var len = queue.length;
+	    while(len) {
+	        currentQueue = queue;
+	        queue = [];
+	        while (++queueIndex < len) {
+	            if (currentQueue) {
+	                currentQueue[queueIndex].run();
+	            }
+	        }
+	        queueIndex = -1;
+	        len = queue.length;
+	    }
+	    currentQueue = null;
+	    draining = false;
+	    runClearTimeout(timeout);
+	}
+	
+	process.nextTick = function (fun) {
+	    var args = new Array(arguments.length - 1);
+	    if (arguments.length > 1) {
+	        for (var i = 1; i < arguments.length; i++) {
+	            args[i - 1] = arguments[i];
+	        }
+	    }
+	    queue.push(new Item(fun, args));
+	    if (queue.length === 1 && !draining) {
+	        runTimeout(drainQueue);
+	    }
+	};
+	
+	// v8 likes predictible objects
+	function Item(fun, array) {
+	    this.fun = fun;
+	    this.array = array;
+	}
+	Item.prototype.run = function () {
+	    this.fun.apply(null, this.array);
+	};
+	process.title = 'browser';
+	process.browser = true;
+	process.env = {};
+	process.argv = [];
+	process.version = ''; // empty string to avoid regexp issues
+	process.versions = {};
+	
+	function noop() {}
+	
+	process.on = noop;
+	process.addListener = noop;
+	process.once = noop;
+	process.off = noop;
+	process.removeListener = noop;
+	process.removeAllListeners = noop;
+	process.emit = noop;
+	
+	process.binding = function (name) {
+	    throw new Error('process.binding is not supported');
+	};
+	
+	process.cwd = function () { return '/' };
+	process.chdir = function (dir) {
+	    throw new Error('process.chdir is not supported');
+	};
+	process.umask = function() { return 0; };
+
+
+/***/ },
+/* 3 */
+/***/ function(module, exports, __webpack_require__) {
+
+	/* WEBPACK VAR INJECTION */(function(global, process) {// Copyright Joyent, Inc. and other Node contributors.
+	//
+	// Permission is hereby granted, free of charge, to any person obtaining a
+	// copy of this software and associated documentation files (the
+	// "Software"), to deal in the Software without restriction, including
+	// without limitation the rights to use, copy, modify, merge, publish,
+	// distribute, sublicense, and/or sell copies of the Software, and to permit
+	// persons to whom the Software is furnished to do so, subject to the
+	// following conditions:
+	//
+	// The above copyright notice and this permission notice shall be included
+	// in all copies or substantial portions of the Software.
+	//
+	// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+	// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+	// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+	// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+	// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+	// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+	// USE OR OTHER DEALINGS IN THE SOFTWARE.
+	
+	var formatRegExp = /%[sdj%]/g;
+	exports.format = function(f) {
+	  if (!isString(f)) {
+	    var objects = [];
+	    for (var i = 0; i < arguments.length; i++) {
+	      objects.push(inspect(arguments[i]));
+	    }
+	    return objects.join(' ');
+	  }
+	
+	  var i = 1;
+	  var args = arguments;
+	  var len = args.length;
+	  var str = String(f).replace(formatRegExp, function(x) {
+	    if (x === '%%') return '%';
+	    if (i >= len) return x;
+	    switch (x) {
+	      case '%s': return String(args[i++]);
+	      case '%d': return Number(args[i++]);
+	      case '%j':
+	        try {
+	          return JSON.stringify(args[i++]);
+	        } catch (_) {
+	          return '[Circular]';
+	        }
+	      default:
+	        return x;
+	    }
+	  });
+	  for (var x = args[i]; i < len; x = args[++i]) {
+	    if (isNull(x) || !isObject(x)) {
+	      str += ' ' + x;
+	    } else {
+	      str += ' ' + inspect(x);
+	    }
+	  }
+	  return str;
+	};
+	
+	
+	// Mark that a method should not be used.
+	// Returns a modified function which warns once by default.
+	// If --no-deprecation is set, then it is a no-op.
+	exports.deprecate = function(fn, msg) {
+	  // Allow for deprecating things in the process of starting up.
+	  if (isUndefined(global.process)) {
+	    return function() {
+	      return exports.deprecate(fn, msg).apply(this, arguments);
+	    };
+	  }
+	
+	  if (process.noDeprecation === true) {
+	    return fn;
+	  }
+	
+	  var warned = false;
+	  function deprecated() {
+	    if (!warned) {
+	      if (process.throwDeprecation) {
+	        throw new Error(msg);
+	      } else if (process.traceDeprecation) {
+	        console.trace(msg);
+	      } else {
+	        console.error(msg);
+	      }
+	      warned = true;
+	    }
+	    return fn.apply(this, arguments);
+	  }
+	
+	  return deprecated;
+	};
+	
+	
+	var debugs = {};
+	var debugEnviron;
+	exports.debuglog = function(set) {
+	  if (isUndefined(debugEnviron))
+	    debugEnviron = process.env.NODE_DEBUG || '';
+	  set = set.toUpperCase();
+	  if (!debugs[set]) {
+	    if (new RegExp('\\b' + set + '\\b', 'i').test(debugEnviron)) {
+	      var pid = process.pid;
+	      debugs[set] = function() {
+	        var msg = exports.format.apply(exports, arguments);
+	        console.error('%s %d: %s', set, pid, msg);
+	      };
+	    } else {
+	      debugs[set] = function() {};
+	    }
+	  }
+	  return debugs[set];
+	};
+	
+	
+	/**
+	 * Echos the value of a value. Trys to print the value out
+	 * in the best way possible given the different types.
+	 *
+	 * @param {Object} obj The object to print out.
+	 * @param {Object} opts Optional options object that alters the output.
+	 */
+	/* legacy: obj, showHidden, depth, colors*/
+	function inspect(obj, opts) {
+	  // default options
+	  var ctx = {
+	    seen: [],
+	    stylize: stylizeNoColor
+	  };
+	  // legacy...
+	  if (arguments.length >= 3) ctx.depth = arguments[2];
+	  if (arguments.length >= 4) ctx.colors = arguments[3];
+	  if (isBoolean(opts)) {
+	    // legacy...
+	    ctx.showHidden = opts;
+	  } else if (opts) {
+	    // got an "options" object
+	    exports._extend(ctx, opts);
+	  }
+	  // set default options
+	  if (isUndefined(ctx.showHidden)) ctx.showHidden = false;
+	  if (isUndefined(ctx.depth)) ctx.depth = 2;
+	  if (isUndefined(ctx.colors)) ctx.colors = false;
+	  if (isUndefined(ctx.customInspect)) ctx.customInspect = true;
+	  if (ctx.colors) ctx.stylize = stylizeWithColor;
+	  return formatValue(ctx, obj, ctx.depth);
+	}
+	exports.inspect = inspect;
+	
+	
+	// http://en.wikipedia.org/wiki/ANSI_escape_code#graphics
+	inspect.colors = {
+	  'bold' : [1, 22],
+	  'italic' : [3, 23],
+	  'underline' : [4, 24],
+	  'inverse' : [7, 27],
+	  'white' : [37, 39],
+	  'grey' : [90, 39],
+	  'black' : [30, 39],
+	  'blue' : [34, 39],
+	  'cyan' : [36, 39],
+	  'green' : [32, 39],
+	  'magenta' : [35, 39],
+	  'red' : [31, 39],
+	  'yellow' : [33, 39]
+	};
+	
+	// Don't use 'blue' not visible on cmd.exe
+	inspect.styles = {
+	  'special': 'cyan',
+	  'number': 'yellow',
+	  'boolean': 'yellow',
+	  'undefined': 'grey',
+	  'null': 'bold',
+	  'string': 'green',
+	  'date': 'magenta',
+	  // "name": intentionally not styling
+	  'regexp': 'red'
+	};
+	
+	
+	function stylizeWithColor(str, styleType) {
+	  var style = inspect.styles[styleType];
+	
+	  if (style) {
+	    return '\u001b[' + inspect.colors[style][0] + 'm' + str +
+	           '\u001b[' + inspect.colors[style][1] + 'm';
+	  } else {
+	    return str;
+	  }
+	}
+	
+	
+	function stylizeNoColor(str, styleType) {
+	  return str;
+	}
+	
+	
+	function arrayToHash(array) {
+	  var hash = {};
+	
+	  array.forEach(function(val, idx) {
+	    hash[val] = true;
+	  });
+	
+	  return hash;
+	}
+	
+	
+	function formatValue(ctx, value, recurseTimes) {
+	  // Provide a hook for user-specified inspect functions.
+	  // Check that value is an object with an inspect function on it
+	  if (ctx.customInspect &&
+	      value &&
+	      isFunction(value.inspect) &&
+	      // Filter out the util module, it's inspect function is special
+	      value.inspect !== exports.inspect &&
+	      // Also filter out any prototype objects using the circular check.
+	      !(value.constructor && value.constructor.prototype === value)) {
+	    var ret = value.inspect(recurseTimes, ctx);
+	    if (!isString(ret)) {
+	      ret = formatValue(ctx, ret, recurseTimes);
+	    }
+	    return ret;
+	  }
+	
+	  // Primitive types cannot have properties
+	  var primitive = formatPrimitive(ctx, value);
+	  if (primitive) {
+	    return primitive;
+	  }
+	
+	  // Look up the keys of the object.
+	  var keys = Object.keys(value);
+	  var visibleKeys = arrayToHash(keys);
+	
+	  if (ctx.showHidden) {
+	    keys = Object.getOwnPropertyNames(value);
+	  }
+	
+	  // IE doesn't make error fields non-enumerable
+	  // http://msdn.microsoft.com/en-us/library/ie/dww52sbt(v=vs.94).aspx
+	  if (isError(value)
+	      && (keys.indexOf('message') >= 0 || keys.indexOf('description') >= 0)) {
+	    return formatError(value);
+	  }
+	
+	  // Some type of object without properties can be shortcutted.
+	  if (keys.length === 0) {
+	    if (isFunction(value)) {
+	      var name = value.name ? ': ' + value.name : '';
+	      return ctx.stylize('[Function' + name + ']', 'special');
+	    }
+	    if (isRegExp(value)) {
+	      return ctx.stylize(RegExp.prototype.toString.call(value), 'regexp');
+	    }
+	    if (isDate(value)) {
+	      return ctx.stylize(Date.prototype.toString.call(value), 'date');
+	    }
+	    if (isError(value)) {
+	      return formatError(value);
+	    }
+	  }
+	
+	  var base = '', array = false, braces = ['{', '}'];
+	
+	  // Make Array say that they are Array
+	  if (isArray(value)) {
+	    array = true;
+	    braces = ['[', ']'];
+	  }
+	
+	  // Make functions say that they are functions
+	  if (isFunction(value)) {
+	    var n = value.name ? ': ' + value.name : '';
+	    base = ' [Function' + n + ']';
+	  }
+	
+	  // Make RegExps say that they are RegExps
+	  if (isRegExp(value)) {
+	    base = ' ' + RegExp.prototype.toString.call(value);
+	  }
+	
+	  // Make dates with properties first say the date
+	  if (isDate(value)) {
+	    base = ' ' + Date.prototype.toUTCString.call(value);
+	  }
+	
+	  // Make error with message first say the error
+	  if (isError(value)) {
+	    base = ' ' + formatError(value);
+	  }
+	
+	  if (keys.length === 0 && (!array || value.length == 0)) {
+	    return braces[0] + base + braces[1];
+	  }
+	
+	  if (recurseTimes < 0) {
+	    if (isRegExp(value)) {
+	      return ctx.stylize(RegExp.prototype.toString.call(value), 'regexp');
+	    } else {
+	      return ctx.stylize('[Object]', 'special');
+	    }
+	  }
+	
+	  ctx.seen.push(value);
+	
+	  var output;
+	  if (array) {
+	    output = formatArray(ctx, value, recurseTimes, visibleKeys, keys);
+	  } else {
+	    output = keys.map(function(key) {
+	      return formatProperty(ctx, value, recurseTimes, visibleKeys, key, array);
+	    });
+	  }
+	
+	  ctx.seen.pop();
+	
+	  return reduceToSingleString(output, base, braces);
+	}
+	
+	
+	function formatPrimitive(ctx, value) {
+	  if (isUndefined(value))
+	    return ctx.stylize('undefined', 'undefined');
+	  if (isString(value)) {
+	    var simple = '\'' + JSON.stringify(value).replace(/^"|"$/g, '')
+	                                             .replace(/'/g, "\\'")
+	                                             .replace(/\\"/g, '"') + '\'';
+	    return ctx.stylize(simple, 'string');
+	  }
+	  if (isNumber(value))
+	    return ctx.stylize('' + value, 'number');
+	  if (isBoolean(value))
+	    return ctx.stylize('' + value, 'boolean');
+	  // For some reason typeof null is "object", so special case here.
+	  if (isNull(value))
+	    return ctx.stylize('null', 'null');
+	}
+	
+	
+	function formatError(value) {
+	  return '[' + Error.prototype.toString.call(value) + ']';
+	}
+	
+	
+	function formatArray(ctx, value, recurseTimes, visibleKeys, keys) {
+	  var output = [];
+	  for (var i = 0, l = value.length; i < l; ++i) {
+	    if (hasOwnProperty(value, String(i))) {
+	      output.push(formatProperty(ctx, value, recurseTimes, visibleKeys,
+	          String(i), true));
+	    } else {
+	      output.push('');
+	    }
+	  }
+	  keys.forEach(function(key) {
+	    if (!key.match(/^\d+$/)) {
+	      output.push(formatProperty(ctx, value, recurseTimes, visibleKeys,
+	          key, true));
+	    }
+	  });
+	  return output;
+	}
+	
+	
+	function formatProperty(ctx, value, recurseTimes, visibleKeys, key, array) {
+	  var name, str, desc;
+	  desc = Object.getOwnPropertyDescriptor(value, key) || { value: value[key] };
+	  if (desc.get) {
+	    if (desc.set) {
+	      str = ctx.stylize('[Getter/Setter]', 'special');
+	    } else {
+	      str = ctx.stylize('[Getter]', 'special');
+	    }
+	  } else {
+	    if (desc.set) {
+	      str = ctx.stylize('[Setter]', 'special');
+	    }
+	  }
+	  if (!hasOwnProperty(visibleKeys, key)) {
+	    name = '[' + key + ']';
+	  }
+	  if (!str) {
+	    if (ctx.seen.indexOf(desc.value) < 0) {
+	      if (isNull(recurseTimes)) {
+	        str = formatValue(ctx, desc.value, null);
+	      } else {
+	        str = formatValue(ctx, desc.value, recurseTimes - 1);
+	      }
+	      if (str.indexOf('\n') > -1) {
+	        if (array) {
+	          str = str.split('\n').map(function(line) {
+	            return '  ' + line;
+	          }).join('\n').substr(2);
+	        } else {
+	          str = '\n' + str.split('\n').map(function(line) {
+	            return '   ' + line;
+	          }).join('\n');
+	        }
+	      }
+	    } else {
+	      str = ctx.stylize('[Circular]', 'special');
+	    }
+	  }
+	  if (isUndefined(name)) {
+	    if (array && key.match(/^\d+$/)) {
+	      return str;
+	    }
+	    name = JSON.stringify('' + key);
+	    if (name.match(/^"([a-zA-Z_][a-zA-Z_0-9]*)"$/)) {
+	      name = name.substr(1, name.length - 2);
+	      name = ctx.stylize(name, 'name');
+	    } else {
+	      name = name.replace(/'/g, "\\'")
+	                 .replace(/\\"/g, '"')
+	                 .replace(/(^"|"$)/g, "'");
+	      name = ctx.stylize(name, 'string');
+	    }
+	  }
+	
+	  return name + ': ' + str;
+	}
+	
+	
+	function reduceToSingleString(output, base, braces) {
+	  var numLinesEst = 0;
+	  var length = output.reduce(function(prev, cur) {
+	    numLinesEst++;
+	    if (cur.indexOf('\n') >= 0) numLinesEst++;
+	    return prev + cur.replace(/\u001b\[\d\d?m/g, '').length + 1;
+	  }, 0);
+	
+	  if (length > 60) {
+	    return braces[0] +
+	           (base === '' ? '' : base + '\n ') +
+	           ' ' +
+	           output.join(',\n  ') +
+	           ' ' +
+	           braces[1];
+	  }
+	
+	  return braces[0] + base + ' ' + output.join(', ') + ' ' + braces[1];
+	}
+	
+	
+	// NOTE: These type checking functions intentionally don't use `instanceof`
+	// because it is fragile and can be easily faked with `Object.create()`.
+	function isArray(ar) {
+	  return Array.isArray(ar);
+	}
+	exports.isArray = isArray;
+	
+	function isBoolean(arg) {
+	  return typeof arg === 'boolean';
+	}
+	exports.isBoolean = isBoolean;
+	
+	function isNull(arg) {
+	  return arg === null;
+	}
+	exports.isNull = isNull;
+	
+	function isNullOrUndefined(arg) {
+	  return arg == null;
+	}
+	exports.isNullOrUndefined = isNullOrUndefined;
+	
+	function isNumber(arg) {
+	  return typeof arg === 'number';
+	}
+	exports.isNumber = isNumber;
+	
+	function isString(arg) {
+	  return typeof arg === 'string';
+	}
+	exports.isString = isString;
+	
+	function isSymbol(arg) {
+	  return typeof arg === 'symbol';
+	}
+	exports.isSymbol = isSymbol;
+	
+	function isUndefined(arg) {
+	  return arg === void 0;
+	}
+	exports.isUndefined = isUndefined;
+	
+	function isRegExp(re) {
+	  return isObject(re) && objectToString(re) === '[object RegExp]';
+	}
+	exports.isRegExp = isRegExp;
+	
+	function isObject(arg) {
+	  return typeof arg === 'object' && arg !== null;
+	}
+	exports.isObject = isObject;
+	
+	function isDate(d) {
+	  return isObject(d) && objectToString(d) === '[object Date]';
+	}
+	exports.isDate = isDate;
+	
+	function isError(e) {
+	  return isObject(e) &&
+	      (objectToString(e) === '[object Error]' || e instanceof Error);
+	}
+	exports.isError = isError;
+	
+	function isFunction(arg) {
+	  return typeof arg === 'function';
+	}
+	exports.isFunction = isFunction;
+	
+	function isPrimitive(arg) {
+	  return arg === null ||
+	         typeof arg === 'boolean' ||
+	         typeof arg === 'number' ||
+	         typeof arg === 'string' ||
+	         typeof arg === 'symbol' ||  // ES6 symbol
+	         typeof arg === 'undefined';
+	}
+	exports.isPrimitive = isPrimitive;
+	
+	exports.isBuffer = __webpack_require__(4);
+	
+	function objectToString(o) {
+	  return Object.prototype.toString.call(o);
+	}
+	
+	
+	function pad(n) {
+	  return n < 10 ? '0' + n.toString(10) : n.toString(10);
+	}
+	
+	
+	var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep',
+	              'Oct', 'Nov', 'Dec'];
+	
+	// 26 Feb 16:19:34
+	function timestamp() {
+	  var d = new Date();
+	  var time = [pad(d.getHours()),
+	              pad(d.getMinutes()),
+	              pad(d.getSeconds())].join(':');
+	  return [d.getDate(), months[d.getMonth()], time].join(' ');
+	}
+	
+	
+	// log is just a thin wrapper to console.log that prepends a timestamp
+	exports.log = function() {
+	  console.log('%s - %s', timestamp(), exports.format.apply(exports, arguments));
+	};
+	
+	
+	/**
+	 * Inherit the prototype methods from one constructor into another.
+	 *
+	 * The Function.prototype.inherits from lang.js rewritten as a standalone
+	 * function (not on Function.prototype). NOTE: If this file is to be loaded
+	 * during bootstrapping this function needs to be rewritten using some native
+	 * functions as prototype setup using normal JavaScript does not work as
+	 * expected during bootstrapping (see mirror.js in r114903).
+	 *
+	 * @param {function} ctor Constructor function which needs to inherit the
+	 *     prototype.
+	 * @param {function} superCtor Constructor function to inherit prototype from.
+	 */
+	exports.inherits = __webpack_require__(5);
+	
+	exports._extend = function(origin, add) {
+	  // Don't do anything if add isn't an object
+	  if (!add || !isObject(add)) return origin;
+	
+	  var keys = Object.keys(add);
+	  var i = keys.length;
+	  while (i--) {
+	    origin[keys[i]] = add[keys[i]];
+	  }
+	  return origin;
+	};
+	
+	function hasOwnProperty(obj, prop) {
+	  return Object.prototype.hasOwnProperty.call(obj, prop);
+	}
+	
+	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }()), __webpack_require__(2)))
+
+/***/ },
+/* 4 */
+/***/ function(module, exports) {
+
+	module.exports = function isBuffer(arg) {
+	  return arg && typeof arg === 'object'
+	    && typeof arg.copy === 'function'
+	    && typeof arg.fill === 'function'
+	    && typeof arg.readUInt8 === 'function';
+	}
+
+/***/ },
+/* 5 */
+/***/ function(module, exports) {
+
+	if (typeof Object.create === 'function') {
+	  // implementation from standard node.js 'util' module
+	  module.exports = function inherits(ctor, superCtor) {
+	    ctor.super_ = superCtor
+	    ctor.prototype = Object.create(superCtor.prototype, {
+	      constructor: {
+	        value: ctor,
+	        enumerable: false,
+	        writable: true,
+	        configurable: true
+	      }
+	    });
+	  };
+	} else {
+	  // old school shim for old browsers
+	  module.exports = function inherits(ctor, superCtor) {
+	    ctor.super_ = superCtor
+	    var TempCtor = function () {}
+	    TempCtor.prototype = superCtor.prototype
+	    ctor.prototype = new TempCtor()
+	    ctor.prototype.constructor = ctor
+	  }
+	}
+
+
+/***/ },
+/* 6 */
+/***/ function(module, exports, __webpack_require__) {
+
+	/* WEBPACK VAR INJECTION */(function(global, process) {/**
+	* @license
+	* Copyright Google Inc. All Rights Reserved.
+	*
+	* Use of this source code is governed by an MIT-style license that can be
+	* found in the LICENSE file at https://angular.io/license
+	*/
+	(function (global, factory) {
+	     true ? factory() :
+	    typeof define === 'function' && define.amd ? define(factory) :
+	    (factory());
+	}(this, (function () { 'use strict';
+	
+	/**
+	 * @license
+	 * Copyright Google Inc. All Rights Reserved.
+	 *
+	 * Use of this source code is governed by an MIT-style license that can be
+	 * found in the LICENSE file at https://angular.io/license
+	 */
+	
+	
+	var Zone$1 = (function (global) {
+	    if (global.Zone) {
+	        throw new Error('Zone already loaded.');
+	    }
+	    var Zone = (function () {
+	        function Zone(parent, zoneSpec) {
+	            this._properties = null;
+	            this._parent = parent;
+	            this._name = zoneSpec ? zoneSpec.name || 'unnamed' : '<root>';
+	            this._properties = zoneSpec && zoneSpec.properties || {};
+	            this._zoneDelegate =
+	                new ZoneDelegate(this, this._parent && this._parent._zoneDelegate, zoneSpec);
+	        }
+	        Zone.assertZonePatched = function () {
+	            if (global.Promise !== ZoneAwarePromise) {
+	                throw new Error('Zone.js has detected that ZoneAwarePromise `(window|global).Promise` ' +
+	                    'has been overwritten.\n' +
+	                    'Most likely cause is that a Promise polyfill has been loaded ' +
+	                    'after Zone.js (Polyfilling Promise api is not necessary when zone.js is loaded. ' +
+	                    'If you must load one, do so before loading zone.js.)');
+	            }
+	        };
+	        Object.defineProperty(Zone, "current", {
+	            get: function () {
+	                return _currentZone;
+	            },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        
+	        Object.defineProperty(Zone, "currentTask", {
+	            get: function () {
+	                return _currentTask;
+	            },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        
+	        Object.defineProperty(Zone.prototype, "parent", {
+	            get: function () {
+	                return this._parent;
+	            },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        
+	        Object.defineProperty(Zone.prototype, "name", {
+	            get: function () {
+	                return this._name;
+	            },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        
+	        Zone.prototype.get = function (key) {
+	            var zone = this.getZoneWith(key);
+	            if (zone)
+	                return zone._properties[key];
+	        };
+	        Zone.prototype.getZoneWith = function (key) {
+	            var current = this;
+	            while (current) {
+	                if (current._properties.hasOwnProperty(key)) {
+	                    return current;
+	                }
+	                current = current._parent;
+	            }
+	            return null;
+	        };
+	        Zone.prototype.fork = function (zoneSpec) {
+	            if (!zoneSpec)
+	                throw new Error('ZoneSpec required!');
+	            return this._zoneDelegate.fork(this, zoneSpec);
+	        };
+	        Zone.prototype.wrap = function (callback, source) {
+	            if (typeof callback !== 'function') {
+	                throw new Error('Expecting function got: ' + callback);
+	            }
+	            var _callback = this._zoneDelegate.intercept(this, callback, source);
+	            var zone = this;
+	            return function () {
+	                return zone.runGuarded(_callback, this, arguments, source);
+	            };
+	        };
+	        Zone.prototype.run = function (callback, applyThis, applyArgs, source) {
+	            if (applyThis === void 0) { applyThis = null; }
+	            if (applyArgs === void 0) { applyArgs = null; }
+	            if (source === void 0) { source = null; }
+	            var oldZone = _currentZone;
+	            _currentZone = this;
+	            try {
+	                return this._zoneDelegate.invoke(this, callback, applyThis, applyArgs, source);
+	            }
+	            finally {
+	                _currentZone = oldZone;
+	            }
+	        };
+	        Zone.prototype.runGuarded = function (callback, applyThis, applyArgs, source) {
+	            if (applyThis === void 0) { applyThis = null; }
+	            if (applyArgs === void 0) { applyArgs = null; }
+	            if (source === void 0) { source = null; }
+	            var oldZone = _currentZone;
+	            _currentZone = this;
+	            try {
+	                try {
+	                    return this._zoneDelegate.invoke(this, callback, applyThis, applyArgs, source);
+	                }
+	                catch (error) {
+	                    if (this._zoneDelegate.handleError(this, error)) {
+	                        throw error;
+	                    }
+	                }
+	            }
+	            finally {
+	                _currentZone = oldZone;
+	            }
+	        };
+	        Zone.prototype.runTask = function (task, applyThis, applyArgs) {
+	            task.runCount++;
+	            if (task.zone != this)
+	                throw new Error('A task can only be run in the zone which created it! (Creation: ' + task.zone.name +
+	                    '; Execution: ' + this.name + ')');
+	            var previousTask = _currentTask;
+	            _currentTask = task;
+	            var oldZone = _currentZone;
+	            _currentZone = this;
+	            try {
+	                if (task.type == 'macroTask' && task.data && !task.data.isPeriodic) {
+	                    task.cancelFn = null;
+	                }
+	                try {
+	                    return this._zoneDelegate.invokeTask(this, task, applyThis, applyArgs);
+	                }
+	                catch (error) {
+	                    if (this._zoneDelegate.handleError(this, error)) {
+	                        throw error;
+	                    }
+	                }
+	            }
+	            finally {
+	                _currentZone = oldZone;
+	                _currentTask = previousTask;
+	            }
+	        };
+	        Zone.prototype.scheduleMicroTask = function (source, callback, data, customSchedule) {
+	            return this._zoneDelegate.scheduleTask(this, new ZoneTask('microTask', this, source, callback, data, customSchedule, null));
+	        };
+	        Zone.prototype.scheduleMacroTask = function (source, callback, data, customSchedule, customCancel) {
+	            return this._zoneDelegate.scheduleTask(this, new ZoneTask('macroTask', this, source, callback, data, customSchedule, customCancel));
+	        };
+	        Zone.prototype.scheduleEventTask = function (source, callback, data, customSchedule, customCancel) {
+	            return this._zoneDelegate.scheduleTask(this, new ZoneTask('eventTask', this, source, callback, data, customSchedule, customCancel));
+	        };
+	        Zone.prototype.cancelTask = function (task) {
+	            var value = this._zoneDelegate.cancelTask(this, task);
+	            task.runCount = -1;
+	            task.cancelFn = null;
+	            return value;
+	        };
+	        Zone.__symbol__ = __symbol__;
+	        return Zone;
+	    }());
+	    
+	    var ZoneDelegate = (function () {
+	        function ZoneDelegate(zone, parentDelegate, zoneSpec) {
+	            this._taskCounts = { microTask: 0, macroTask: 0, eventTask: 0 };
+	            this.zone = zone;
+	            this._parentDelegate = parentDelegate;
+	            this._forkZS = zoneSpec && (zoneSpec && zoneSpec.onFork ? zoneSpec : parentDelegate._forkZS);
+	            this._forkDlgt = zoneSpec && (zoneSpec.onFork ? parentDelegate : parentDelegate._forkDlgt);
+	            this._interceptZS =
+	                zoneSpec && (zoneSpec.onIntercept ? zoneSpec : parentDelegate._interceptZS);
+	            this._interceptDlgt =
+	                zoneSpec && (zoneSpec.onIntercept ? parentDelegate : parentDelegate._interceptDlgt);
+	            this._invokeZS = zoneSpec && (zoneSpec.onInvoke ? zoneSpec : parentDelegate._invokeZS);
+	            this._invokeDlgt =
+	                zoneSpec && (zoneSpec.onInvoke ? parentDelegate : parentDelegate._invokeDlgt);
+	            this._handleErrorZS =
+	                zoneSpec && (zoneSpec.onHandleError ? zoneSpec : parentDelegate._handleErrorZS);
+	            this._handleErrorDlgt =
+	                zoneSpec && (zoneSpec.onHandleError ? parentDelegate : parentDelegate._handleErrorDlgt);
+	            this._scheduleTaskZS =
+	                zoneSpec && (zoneSpec.onScheduleTask ? zoneSpec : parentDelegate._scheduleTaskZS);
+	            this._scheduleTaskDlgt =
+	                zoneSpec && (zoneSpec.onScheduleTask ? parentDelegate : parentDelegate._scheduleTaskDlgt);
+	            this._invokeTaskZS =
+	                zoneSpec && (zoneSpec.onInvokeTask ? zoneSpec : parentDelegate._invokeTaskZS);
+	            this._invokeTaskDlgt =
+	                zoneSpec && (zoneSpec.onInvokeTask ? parentDelegate : parentDelegate._invokeTaskDlgt);
+	            this._cancelTaskZS =
+	                zoneSpec && (zoneSpec.onCancelTask ? zoneSpec : parentDelegate._cancelTaskZS);
+	            this._cancelTaskDlgt =
+	                zoneSpec && (zoneSpec.onCancelTask ? parentDelegate : parentDelegate._cancelTaskDlgt);
+	            this._hasTaskZS = zoneSpec && (zoneSpec.onHasTask ? zoneSpec : parentDelegate._hasTaskZS);
+	            this._hasTaskDlgt =
+	                zoneSpec && (zoneSpec.onHasTask ? parentDelegate : parentDelegate._hasTaskDlgt);
+	        }
+	        ZoneDelegate.prototype.fork = function (targetZone, zoneSpec) {
+	            return this._forkZS ? this._forkZS.onFork(this._forkDlgt, this.zone, targetZone, zoneSpec) :
+	                new Zone(targetZone, zoneSpec);
+	        };
+	        ZoneDelegate.prototype.intercept = function (targetZone, callback, source) {
+	            return this._interceptZS ?
+	                this._interceptZS.onIntercept(this._interceptDlgt, this.zone, targetZone, callback, source) :
+	                callback;
+	        };
+	        ZoneDelegate.prototype.invoke = function (targetZone, callback, applyThis, applyArgs, source) {
+	            return this._invokeZS ?
+	                this._invokeZS.onInvoke(this._invokeDlgt, this.zone, targetZone, callback, applyThis, applyArgs, source) :
+	                callback.apply(applyThis, applyArgs);
+	        };
+	        ZoneDelegate.prototype.handleError = function (targetZone, error) {
+	            return this._handleErrorZS ?
+	                this._handleErrorZS.onHandleError(this._handleErrorDlgt, this.zone, targetZone, error) :
+	                true;
+	        };
+	        ZoneDelegate.prototype.scheduleTask = function (targetZone, task) {
+	            try {
+	                if (this._scheduleTaskZS) {
+	                    return this._scheduleTaskZS.onScheduleTask(this._scheduleTaskDlgt, this.zone, targetZone, task);
+	                }
+	                else if (task.scheduleFn) {
+	                    task.scheduleFn(task);
+	                }
+	                else if (task.type == 'microTask') {
+	                    scheduleMicroTask(task);
+	                }
+	                else {
+	                    throw new Error('Task is missing scheduleFn.');
+	                }
+	                return task;
+	            }
+	            finally {
+	                if (targetZone == this.zone) {
+	                    this._updateTaskCount(task.type, 1);
+	                }
+	            }
+	        };
+	        ZoneDelegate.prototype.invokeTask = function (targetZone, task, applyThis, applyArgs) {
+	            try {
+	                return this._invokeTaskZS ?
+	                    this._invokeTaskZS.onInvokeTask(this._invokeTaskDlgt, this.zone, targetZone, task, applyThis, applyArgs) :
+	                    task.callback.apply(applyThis, applyArgs);
+	            }
+	            finally {
+	                if (targetZone == this.zone && (task.type != 'eventTask') &&
+	                    !(task.data && task.data.isPeriodic)) {
+	                    this._updateTaskCount(task.type, -1);
+	                }
+	            }
+	        };
+	        ZoneDelegate.prototype.cancelTask = function (targetZone, task) {
+	            var value;
+	            if (this._cancelTaskZS) {
+	                value = this._cancelTaskZS.onCancelTask(this._cancelTaskDlgt, this.zone, targetZone, task);
+	            }
+	            else if (!task.cancelFn) {
+	                throw new Error('Task does not support cancellation, or is already canceled.');
+	            }
+	            else {
+	                value = task.cancelFn(task);
+	            }
+	            if (targetZone == this.zone) {
+	                // this should not be in the finally block, because exceptions assume not canceled.
+	                this._updateTaskCount(task.type, -1);
+	            }
+	            return value;
+	        };
+	        ZoneDelegate.prototype.hasTask = function (targetZone, isEmpty) {
+	            return this._hasTaskZS &&
+	                this._hasTaskZS.onHasTask(this._hasTaskDlgt, this.zone, targetZone, isEmpty);
+	        };
+	        ZoneDelegate.prototype._updateTaskCount = function (type, count) {
+	            var counts = this._taskCounts;
+	            var prev = counts[type];
+	            var next = counts[type] = prev + count;
+	            if (next < 0) {
+	                throw new Error('More tasks executed then were scheduled.');
+	            }
+	            if (prev == 0 || next == 0) {
+	                var isEmpty = {
+	                    microTask: counts.microTask > 0,
+	                    macroTask: counts.macroTask > 0,
+	                    eventTask: counts.eventTask > 0,
+	                    change: type
+	                };
+	                try {
+	                    this.hasTask(this.zone, isEmpty);
+	                }
+	                finally {
+	                    if (this._parentDelegate) {
+	                        this._parentDelegate._updateTaskCount(type, count);
+	                    }
+	                }
+	            }
+	        };
+	        return ZoneDelegate;
+	    }());
+	    var ZoneTask = (function () {
+	        function ZoneTask(type, zone, source, callback, options, scheduleFn, cancelFn) {
+	            this.runCount = 0;
+	            this.type = type;
+	            this.zone = zone;
+	            this.source = source;
+	            this.data = options;
+	            this.scheduleFn = scheduleFn;
+	            this.cancelFn = cancelFn;
+	            this.callback = callback;
+	            var self = this;
+	            this.invoke = function () {
+	                _numberOfNestedTaskFrames++;
+	                try {
+	                    return zone.runTask(self, this, arguments);
+	                }
+	                finally {
+	                    if (_numberOfNestedTaskFrames == 1) {
+	                        drainMicroTaskQueue();
+	                    }
+	                    _numberOfNestedTaskFrames--;
+	                }
+	            };
+	        }
+	        ZoneTask.prototype.toString = function () {
+	            if (this.data && typeof this.data.handleId !== 'undefined') {
+	                return this.data.handleId;
+	            }
+	            else {
+	                return Object.prototype.toString.call(this);
+	            }
+	        };
+	        return ZoneTask;
+	    }());
+	    function __symbol__(name) {
+	        return '__zone_symbol__' + name;
+	    }
+	    
+	    var symbolSetTimeout = __symbol__('setTimeout');
+	    var symbolPromise = __symbol__('Promise');
+	    var symbolThen = __symbol__('then');
+	    var _currentZone = new Zone(null, null);
+	    var _currentTask = null;
+	    var _microTaskQueue = [];
+	    var _isDrainingMicrotaskQueue = false;
+	    var _uncaughtPromiseErrors = [];
+	    var _numberOfNestedTaskFrames = 0;
+	    function scheduleQueueDrain() {
+	        // if we are not running in any task, and there has not been anything scheduled
+	        // we must bootstrap the initial task creation by manually scheduling the drain
+	        if (_numberOfNestedTaskFrames == 0 && _microTaskQueue.length == 0) {
+	            // We are not running in Task, so we need to kickstart the microtask queue.
+	            if (global[symbolPromise]) {
+	                global[symbolPromise].resolve(0)[symbolThen](drainMicroTaskQueue);
+	            }
+	            else {
+	                global[symbolSetTimeout](drainMicroTaskQueue, 0);
+	            }
+	        }
+	    }
+	    function scheduleMicroTask(task) {
+	        scheduleQueueDrain();
+	        _microTaskQueue.push(task);
+	    }
+	    function consoleError(e) {
+	        var rejection = e && e.rejection;
+	        if (rejection) {
+	            console.error('Unhandled Promise rejection:', rejection instanceof Error ? rejection.message : rejection, '; Zone:', e.zone.name, '; Task:', e.task && e.task.source, '; Value:', rejection, rejection instanceof Error ? rejection.stack : undefined);
+	        }
+	        console.error(e);
+	    }
+	    function drainMicroTaskQueue() {
+	        if (!_isDrainingMicrotaskQueue) {
+	            _isDrainingMicrotaskQueue = true;
+	            while (_microTaskQueue.length) {
+	                var queue = _microTaskQueue;
+	                _microTaskQueue = [];
+	                for (var i = 0; i < queue.length; i++) {
+	                    var task = queue[i];
+	                    try {
+	                        task.zone.runTask(task, null, null);
+	                    }
+	                    catch (e) {
+	                        consoleError(e);
+	                    }
+	                }
+	            }
+	            while (_uncaughtPromiseErrors.length) {
+	                var _loop_1 = function() {
+	                    var uncaughtPromiseError = _uncaughtPromiseErrors.shift();
+	                    try {
+	                        uncaughtPromiseError.zone.runGuarded(function () {
+	                            throw uncaughtPromiseError;
+	                        });
+	                    }
+	                    catch (e) {
+	                        consoleError(e);
+	                    }
+	                };
+	                while (_uncaughtPromiseErrors.length) {
+	                    _loop_1();
+	                }
+	            }
+	            _isDrainingMicrotaskQueue = false;
+	        }
+	    }
+	    function isThenable(value) {
+	        return value && value.then;
+	    }
+	    function forwardResolution(value) {
+	        return value;
+	    }
+	    function forwardRejection(rejection) {
+	        return ZoneAwarePromise.reject(rejection);
+	    }
+	    var symbolState = __symbol__('state');
+	    var symbolValue = __symbol__('value');
+	    var source = 'Promise.then';
+	    var UNRESOLVED = null;
+	    var RESOLVED = true;
+	    var REJECTED = false;
+	    var REJECTED_NO_CATCH = 0;
+	    function makeResolver(promise, state) {
+	        return function (v) {
+	            resolvePromise(promise, state, v);
+	            // Do not return value or you will break the Promise spec.
+	        };
+	    }
+	    function resolvePromise(promise, state, value) {
+	        if (promise[symbolState] === UNRESOLVED) {
+	            if (value instanceof ZoneAwarePromise && value[symbolState] !== UNRESOLVED) {
+	                clearRejectedNoCatch(value);
+	                resolvePromise(promise, value[symbolState], value[symbolValue]);
+	            }
+	            else if (isThenable(value)) {
+	                value.then(makeResolver(promise, state), makeResolver(promise, false));
+	            }
+	            else {
+	                promise[symbolState] = state;
+	                var queue = promise[symbolValue];
+	                promise[symbolValue] = value;
+	                for (var i = 0; i < queue.length;) {
+	                    scheduleResolveOrReject(promise, queue[i++], queue[i++], queue[i++], queue[i++]);
+	                }
+	                if (queue.length == 0 && state == REJECTED) {
+	                    promise[symbolState] = REJECTED_NO_CATCH;
+	                    try {
+	                        throw new Error('Uncaught (in promise): ' + value +
+	                            (value && value.stack ? '\n' + value.stack : ''));
+	                    }
+	                    catch (e) {
+	                        var error_1 = e;
+	                        error_1.rejection = value;
+	                        error_1.promise = promise;
+	                        error_1.zone = Zone.current;
+	                        error_1.task = Zone.currentTask;
+	                        _uncaughtPromiseErrors.push(error_1);
+	                        scheduleQueueDrain();
+	                    }
+	                }
+	            }
+	        }
+	        // Resolving an already resolved promise is a noop.
+	        return promise;
+	    }
+	    function clearRejectedNoCatch(promise) {
+	        if (promise[symbolState] === REJECTED_NO_CATCH) {
+	            promise[symbolState] = REJECTED;
+	            for (var i = 0; i < _uncaughtPromiseErrors.length; i++) {
+	                if (promise === _uncaughtPromiseErrors[i].promise) {
+	                    _uncaughtPromiseErrors.splice(i, 1);
+	                    break;
+	                }
+	            }
+	        }
+	    }
+	    function scheduleResolveOrReject(promise, zone, chainPromise, onFulfilled, onRejected) {
+	        clearRejectedNoCatch(promise);
+	        var delegate = promise[symbolState] ? onFulfilled || forwardResolution : onRejected || forwardRejection;
+	        zone.scheduleMicroTask(source, function () {
+	            try {
+	                resolvePromise(chainPromise, true, zone.run(delegate, null, [promise[symbolValue]]));
+	            }
+	            catch (error) {
+	                resolvePromise(chainPromise, false, error);
+	            }
+	        });
+	    }
+	    var ZoneAwarePromise = (function () {
+	        function ZoneAwarePromise(executor) {
+	            var promise = this;
+	            if (!(promise instanceof ZoneAwarePromise)) {
+	                throw new Error('Must be an instanceof Promise.');
+	            }
+	            promise[symbolState] = UNRESOLVED;
+	            promise[symbolValue] = []; // queue;
+	            try {
+	                executor && executor(makeResolver(promise, RESOLVED), makeResolver(promise, REJECTED));
+	            }
+	            catch (e) {
+	                resolvePromise(promise, false, e);
+	            }
+	        }
+	        ZoneAwarePromise.resolve = function (value) {
+	            return resolvePromise(new this(null), RESOLVED, value);
+	        };
+	        ZoneAwarePromise.reject = function (error) {
+	            return resolvePromise(new this(null), REJECTED, error);
+	        };
+	        ZoneAwarePromise.race = function (values) {
+	            var resolve;
+	            var reject;
+	            var promise = new this(function (res, rej) {
+	                _a = [res, rej], resolve = _a[0], reject = _a[1];
+	                var _a;
+	            });
+	            function onResolve(value) {
+	                promise && (promise = null || resolve(value));
+	            }
+	            function onReject(error) {
+	                promise && (promise = null || reject(error));
+	            }
+	            for (var _i = 0, values_1 = values; _i < values_1.length; _i++) {
+	                var value = values_1[_i];
+	                if (!isThenable(value)) {
+	                    value = this.resolve(value);
+	                }
+	                value.then(onResolve, onReject);
+	            }
+	            return promise;
+	        };
+	        ZoneAwarePromise.all = function (values) {
+	            var resolve;
+	            var reject;
+	            var promise = new this(function (res, rej) {
+	                resolve = res;
+	                reject = rej;
+	            });
+	            var count = 0;
+	            var resolvedValues = [];
+	            for (var _i = 0, values_2 = values; _i < values_2.length; _i++) {
+	                var value = values_2[_i];
+	                if (!isThenable(value)) {
+	                    value = this.resolve(value);
+	                }
+	                value.then((function (index) { return function (value) {
+	                    resolvedValues[index] = value;
+	                    count--;
+	                    if (!count) {
+	                        resolve(resolvedValues);
+	                    }
+	                }; })(count), reject);
+	                count++;
+	            }
+	            if (!count)
+	                resolve(resolvedValues);
+	            return promise;
+	        };
+	        ZoneAwarePromise.prototype.then = function (onFulfilled, onRejected) {
+	            var chainPromise = new this.constructor(null);
+	            var zone = Zone.current;
+	            if (this[symbolState] == UNRESOLVED) {
+	                this[symbolValue].push(zone, chainPromise, onFulfilled, onRejected);
+	            }
+	            else {
+	                scheduleResolveOrReject(this, zone, chainPromise, onFulfilled, onRejected);
+	            }
+	            return chainPromise;
+	        };
+	        ZoneAwarePromise.prototype.catch = function (onRejected) {
+	            return this.then(null, onRejected);
+	        };
+	        return ZoneAwarePromise;
+	    }());
+	    // Protect against aggressive optimizers dropping seemingly unused properties.
+	    // E.g. Closure Compiler in advanced mode.
+	    ZoneAwarePromise['resolve'] = ZoneAwarePromise.resolve;
+	    ZoneAwarePromise['reject'] = ZoneAwarePromise.reject;
+	    ZoneAwarePromise['race'] = ZoneAwarePromise.race;
+	    ZoneAwarePromise['all'] = ZoneAwarePromise.all;
+	    var NativePromise = global[__symbol__('Promise')] = global.Promise;
+	    global.Promise = ZoneAwarePromise;
+	    function patchThen(NativePromise) {
+	        var NativePromiseProtototype = NativePromise.prototype;
+	        var NativePromiseThen = NativePromiseProtototype[__symbol__('then')] =
+	            NativePromiseProtototype.then;
+	        NativePromiseProtototype.then = function (onResolve, onReject) {
+	            var nativePromise = this;
+	            return new ZoneAwarePromise(function (resolve, reject) {
+	                NativePromiseThen.call(nativePromise, resolve, reject);
+	            })
+	                .then(onResolve, onReject);
+	        };
+	    }
+	    if (NativePromise) {
+	        patchThen(NativePromise);
+	        if (typeof global['fetch'] !== 'undefined') {
+	            var fetchPromise = void 0;
+	            try {
+	                // In MS Edge this throws
+	                fetchPromise = global['fetch']();
+	            }
+	            catch (e) {
+	                // In Chrome this throws instead.
+	                fetchPromise = global['fetch']('about:blank');
+	            }
+	            // ignore output to prevent error;
+	            fetchPromise.then(function () { return null; }, function () { return null; });
+	            if (fetchPromise.constructor != NativePromise &&
+	                fetchPromise.constructor != ZoneAwarePromise) {
+	                patchThen(fetchPromise.constructor);
+	            }
+	        }
+	    }
+	    // This is not part of public API, but it is usefull for tests, so we expose it.
+	    Promise[Zone.__symbol__('uncaughtPromiseErrors')] = _uncaughtPromiseErrors;
+	    return global.Zone = Zone;
+	})(typeof window === 'object' && window || typeof self === 'object' && self || global);
+	
+	/**
+	 * @license
+	 * Copyright Google Inc. All Rights Reserved.
+	 *
+	 * Use of this source code is governed by an MIT-style license that can be
+	 * found in the LICENSE file at https://angular.io/license
+	 */
+	var zoneSymbol = Zone['__symbol__'];
+	var _global$1 = typeof window === 'object' && window || typeof self === 'object' && self || global;
+	function bindArguments(args, source) {
+	    for (var i = args.length - 1; i >= 0; i--) {
+	        if (typeof args[i] === 'function') {
+	            args[i] = Zone.current.wrap(args[i], source + '_' + i);
+	        }
+	    }
+	    return args;
+	}
+	
+	function patchPrototype(prototype, fnNames) {
+	    var source = prototype.constructor['name'];
+	    var _loop_1 = function(i) {
+	        var name_1 = fnNames[i];
+	        var delegate = prototype[name_1];
+	        if (delegate) {
+	            prototype[name_1] = (function (delegate) {
+	                return function () {
+	                    return delegate.apply(this, bindArguments(arguments, source + '.' + name_1));
+	                };
+	            })(delegate);
+	        }
+	    };
+	    for (var i = 0; i < fnNames.length; i++) {
+	        _loop_1(i);
+	    }
+	}
+	
+	var isWebWorker = (typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope);
+	var isNode = (typeof process !== 'undefined' && {}.toString.call(process) === '[object process]');
+	var isBrowser = !isNode && !isWebWorker && !!(typeof window !== 'undefined' && window['HTMLElement']);
+	function patchProperty(obj, prop) {
+	    var desc = Object.getOwnPropertyDescriptor(obj, prop) || { enumerable: true, configurable: true };
+	    // A property descriptor cannot have getter/setter and be writable
+	    // deleting the writable and value properties avoids this error:
+	    //
+	    // TypeError: property descriptors must not specify a value or be writable when a
+	    // getter or setter has been specified
+	    delete desc.writable;
+	    delete desc.value;
+	    // substr(2) cuz 'onclick' -> 'click', etc
+	    var eventName = prop.substr(2);
+	    var _prop = '_' + prop;
+	    desc.set = function (fn) {
+	        if (this[_prop]) {
+	            this.removeEventListener(eventName, this[_prop]);
+	        }
+	        if (typeof fn === 'function') {
+	            var wrapFn = function (event) {
+	                var result;
+	                result = fn.apply(this, arguments);
+	                if (result != undefined && !result)
+	                    event.preventDefault();
+	            };
+	            this[_prop] = wrapFn;
+	            this.addEventListener(eventName, wrapFn, false);
+	        }
+	        else {
+	            this[_prop] = null;
+	        }
+	    };
+	    // The getter would return undefined for unassigned properties but the default value of an
+	    // unassigned property is null
+	    desc.get = function () {
+	        return this[_prop] || null;
+	    };
+	    Object.defineProperty(obj, prop, desc);
+	}
+	
+	function patchOnProperties(obj, properties) {
+	    var onProperties = [];
+	    for (var prop in obj) {
+	        if (prop.substr(0, 2) == 'on') {
+	            onProperties.push(prop);
+	        }
+	    }
+	    for (var j = 0; j < onProperties.length; j++) {
+	        patchProperty(obj, onProperties[j]);
+	    }
+	    if (properties) {
+	        for (var i = 0; i < properties.length; i++) {
+	            patchProperty(obj, 'on' + properties[i]);
+	        }
+	    }
+	}
+	
+	var EVENT_TASKS = zoneSymbol('eventTasks');
+	// For EventTarget
+	var ADD_EVENT_LISTENER = 'addEventListener';
+	var REMOVE_EVENT_LISTENER = 'removeEventListener';
+	function findExistingRegisteredTask(target, handler, name, capture, remove) {
+	    var eventTasks = target[EVENT_TASKS];
+	    if (eventTasks) {
+	        for (var i = 0; i < eventTasks.length; i++) {
+	            var eventTask = eventTasks[i];
+	            var data = eventTask.data;
+	            if (data.handler === handler && data.useCapturing === capture && data.eventName === name) {
+	                if (remove) {
+	                    eventTasks.splice(i, 1);
+	                }
+	                return eventTask;
+	            }
+	        }
+	    }
+	    return null;
+	}
+	function attachRegisteredEvent(target, eventTask) {
+	    var eventTasks = target[EVENT_TASKS];
+	    if (!eventTasks) {
+	        eventTasks = target[EVENT_TASKS] = [];
+	    }
+	    eventTasks.push(eventTask);
+	}
+	function makeZoneAwareAddListener(addFnName, removeFnName, useCapturingParam, allowDuplicates) {
+	    if (useCapturingParam === void 0) { useCapturingParam = true; }
+	    if (allowDuplicates === void 0) { allowDuplicates = false; }
+	    var addFnSymbol = zoneSymbol(addFnName);
+	    var removeFnSymbol = zoneSymbol(removeFnName);
+	    var defaultUseCapturing = useCapturingParam ? false : undefined;
+	    function scheduleEventListener(eventTask) {
+	        var meta = eventTask.data;
+	        attachRegisteredEvent(meta.target, eventTask);
+	        return meta.target[addFnSymbol](meta.eventName, eventTask.invoke, meta.useCapturing);
+	    }
+	    function cancelEventListener(eventTask) {
+	        var meta = eventTask.data;
+	        findExistingRegisteredTask(meta.target, eventTask.invoke, meta.eventName, meta.useCapturing, true);
+	        meta.target[removeFnSymbol](meta.eventName, eventTask.invoke, meta.useCapturing);
+	    }
+	    return function zoneAwareAddListener(self, args) {
+	        var eventName = args[0];
+	        var handler = args[1];
+	        var useCapturing = args[2] || defaultUseCapturing;
+	        // - Inside a Web Worker, `this` is undefined, the context is `global`
+	        // - When `addEventListener` is called on the global context in strict mode, `this` is undefined
+	        // see https://github.com/angular/zone.js/issues/190
+	        var target = self || _global$1;
+	        var delegate = null;
+	        if (typeof handler == 'function') {
+	            delegate = handler;
+	        }
+	        else if (handler && handler.handleEvent) {
+	            delegate = function (event) { return handler.handleEvent(event); };
+	        }
+	        var validZoneHandler = false;
+	        try {
+	            // In cross site contexts (such as WebDriver frameworks like Selenium),
+	            // accessing the handler object here will cause an exception to be thrown which
+	            // will fail tests prematurely.
+	            validZoneHandler = handler && handler.toString() === '[object FunctionWrapper]';
+	        }
+	        catch (e) {
+	            // Returning nothing here is fine, because objects in a cross-site context are unusable
+	            return;
+	        }
+	        // Ignore special listeners of IE11 & Edge dev tools, see
+	        // https://github.com/angular/zone.js/issues/150
+	        if (!delegate || validZoneHandler) {
+	            return target[addFnSymbol](eventName, handler, useCapturing);
+	        }
+	        if (!allowDuplicates) {
+	            var eventTask = findExistingRegisteredTask(target, handler, eventName, useCapturing, false);
+	            if (eventTask) {
+	                // we already registered, so this will have noop.
+	                return target[addFnSymbol](eventName, eventTask.invoke, useCapturing);
+	            }
+	        }
+	        var zone = Zone.current;
+	        var source = target.constructor['name'] + '.' + addFnName + ':' + eventName;
+	        var data = {
+	            target: target,
+	            eventName: eventName,
+	            name: eventName,
+	            useCapturing: useCapturing,
+	            handler: handler
+	        };
+	        zone.scheduleEventTask(source, delegate, data, scheduleEventListener, cancelEventListener);
+	    };
+	}
+	function makeZoneAwareRemoveListener(fnName, useCapturingParam) {
+	    if (useCapturingParam === void 0) { useCapturingParam = true; }
+	    var symbol = zoneSymbol(fnName);
+	    var defaultUseCapturing = useCapturingParam ? false : undefined;
+	    return function zoneAwareRemoveListener(self, args) {
+	        var eventName = args[0];
+	        var handler = args[1];
+	        var useCapturing = args[2] || defaultUseCapturing;
+	        // - Inside a Web Worker, `this` is undefined, the context is `global`
+	        // - When `addEventListener` is called on the global context in strict mode, `this` is undefined
+	        // see https://github.com/angular/zone.js/issues/190
+	        var target = self || _global$1;
+	        var eventTask = findExistingRegisteredTask(target, handler, eventName, useCapturing, true);
+	        if (eventTask) {
+	            eventTask.zone.cancelTask(eventTask);
+	        }
+	        else {
+	            target[symbol](eventName, handler, useCapturing);
+	        }
+	    };
+	}
+	
+	var zoneAwareAddEventListener = makeZoneAwareAddListener(ADD_EVENT_LISTENER, REMOVE_EVENT_LISTENER);
+	var zoneAwareRemoveEventListener = makeZoneAwareRemoveListener(REMOVE_EVENT_LISTENER);
+	function patchEventTargetMethods(obj) {
+	    if (obj && obj.addEventListener) {
+	        patchMethod(obj, ADD_EVENT_LISTENER, function () { return zoneAwareAddEventListener; });
+	        patchMethod(obj, REMOVE_EVENT_LISTENER, function () { return zoneAwareRemoveEventListener; });
+	        return true;
+	    }
+	    else {
+	        return false;
+	    }
+	}
+	var originalInstanceKey = zoneSymbol('originalInstance');
+	// wrap some native API on `window`
+	function patchClass(className) {
+	    var OriginalClass = _global$1[className];
+	    if (!OriginalClass)
+	        return;
+	    _global$1[className] = function () {
+	        var a = bindArguments(arguments, className);
+	        switch (a.length) {
+	            case 0:
+	                this[originalInstanceKey] = new OriginalClass();
+	                break;
+	            case 1:
+	                this[originalInstanceKey] = new OriginalClass(a[0]);
+	                break;
+	            case 2:
+	                this[originalInstanceKey] = new OriginalClass(a[0], a[1]);
+	                break;
+	            case 3:
+	                this[originalInstanceKey] = new OriginalClass(a[0], a[1], a[2]);
+	                break;
+	            case 4:
+	                this[originalInstanceKey] = new OriginalClass(a[0], a[1], a[2], a[3]);
+	                break;
+	            default:
+	                throw new Error('Arg list too long.');
+	        }
+	    };
+	    var instance = new OriginalClass(function () { });
+	    var prop;
+	    for (prop in instance) {
+	        // https://bugs.webkit.org/show_bug.cgi?id=44721
+	        if (className === 'XMLHttpRequest' && prop === 'responseBlob')
+	            continue;
+	        (function (prop) {
+	            if (typeof instance[prop] === 'function') {
+	                _global$1[className].prototype[prop] = function () {
+	                    return this[originalInstanceKey][prop].apply(this[originalInstanceKey], arguments);
+	                };
+	            }
+	            else {
+	                Object.defineProperty(_global$1[className].prototype, prop, {
+	                    set: function (fn) {
+	                        if (typeof fn === 'function') {
+	                            this[originalInstanceKey][prop] = Zone.current.wrap(fn, className + '.' + prop);
+	                        }
+	                        else {
+	                            this[originalInstanceKey][prop] = fn;
+	                        }
+	                    },
+	                    get: function () {
+	                        return this[originalInstanceKey][prop];
+	                    }
+	                });
+	            }
+	        }(prop));
+	    }
+	    for (prop in OriginalClass) {
+	        if (prop !== 'prototype' && OriginalClass.hasOwnProperty(prop)) {
+	            _global$1[className][prop] = OriginalClass[prop];
+	        }
+	    }
+	}
+	
+	function createNamedFn(name, delegate) {
+	    try {
+	        return (Function('f', "return function " + name + "(){return f(this, arguments)}"))(delegate);
+	    }
+	    catch (e) {
+	        // if we fail, we must be CSP, just return delegate.
+	        return function () {
+	            return delegate(this, arguments);
+	        };
+	    }
+	}
+	function patchMethod(target, name, patchFn) {
+	    var proto = target;
+	    while (proto && Object.getOwnPropertyNames(proto).indexOf(name) === -1) {
+	        proto = Object.getPrototypeOf(proto);
+	    }
+	    if (!proto && target[name]) {
+	        // somehow we did not find it, but we can see it. This happens on IE for Window properties.
+	        proto = target;
+	    }
+	    var delegateName = zoneSymbol(name);
+	    var delegate;
+	    if (proto && !(delegate = proto[delegateName])) {
+	        delegate = proto[delegateName] = proto[name];
+	        proto[name] = createNamedFn(name, patchFn(delegate, delegateName, name));
+	    }
+	    return delegate;
+	}
+	
+	/**
+	 * @license
+	 * Copyright Google Inc. All Rights Reserved.
+	 *
+	 * Use of this source code is governed by an MIT-style license that can be
+	 * found in the LICENSE file at https://angular.io/license
+	 */
+	function patchTimer(window, setName, cancelName, nameSuffix) {
+	    var setNative = null;
+	    var clearNative = null;
+	    setName += nameSuffix;
+	    cancelName += nameSuffix;
+	    var tasksByHandleId = {};
+	    function scheduleTask(task) {
+	        var data = task.data;
+	        data.args[0] = function () {
+	            task.invoke.apply(this, arguments);
+	            delete tasksByHandleId[data.handleId];
+	        };
+	        data.handleId = setNative.apply(window, data.args);
+	        tasksByHandleId[data.handleId] = task;
+	        return task;
+	    }
+	    function clearTask(task) {
+	        delete tasksByHandleId[task.data.handleId];
+	        return clearNative(task.data.handleId);
+	    }
+	    setNative =
+	        patchMethod(window, setName, function (delegate) { return function (self, args) {
+	            if (typeof args[0] === 'function') {
+	                var zone = Zone.current;
+	                var options = {
+	                    handleId: null,
+	                    isPeriodic: nameSuffix === 'Interval',
+	                    delay: (nameSuffix === 'Timeout' || nameSuffix === 'Interval') ? args[1] || 0 : null,
+	                    args: args
+	                };
+	                var task = zone.scheduleMacroTask(setName, args[0], options, scheduleTask, clearTask);
+	                if (!task) {
+	                    return task;
+	                }
+	                // Node.js must additionally support the ref and unref functions.
+	                var handle = task.data.handleId;
+	                if (handle.ref && handle.unref) {
+	                    task.ref = handle.ref.bind(handle);
+	                    task.unref = handle.unref.bind(handle);
+	                }
+	                return task;
+	            }
+	            else {
+	                // cause an error by calling it directly.
+	                return delegate.apply(window, args);
+	            }
+	        }; });
+	    clearNative =
+	        patchMethod(window, cancelName, function (delegate) { return function (self, args) {
+	            var task = typeof args[0] === 'number' ? tasksByHandleId[args[0]] : args[0];
+	            if (task && typeof task.type === 'string') {
+	                if (task.cancelFn && task.data.isPeriodic || task.runCount === 0) {
+	                    // Do not cancel already canceled functions
+	                    task.zone.cancelTask(task);
+	                }
+	            }
+	            else {
+	                // cause an error by calling it directly.
+	                delegate.apply(window, args);
+	            }
+	        }; });
+	}
+	
+	/**
+	 * @license
+	 * Copyright Google Inc. All Rights Reserved.
+	 *
+	 * Use of this source code is governed by an MIT-style license that can be
+	 * found in the LICENSE file at https://angular.io/license
+	 */
+	/*
+	 * This is necessary for Chrome and Chrome mobile, to enable
+	 * things like redefining `createdCallback` on an element.
+	 */
+	var _defineProperty = Object[zoneSymbol('defineProperty')] = Object.defineProperty;
+	var _getOwnPropertyDescriptor = Object[zoneSymbol('getOwnPropertyDescriptor')] =
+	    Object.getOwnPropertyDescriptor;
+	var _create = Object.create;
+	var unconfigurablesKey = zoneSymbol('unconfigurables');
+	function propertyPatch() {
+	    Object.defineProperty = function (obj, prop, desc) {
+	        if (isUnconfigurable(obj, prop)) {
+	            throw new TypeError('Cannot assign to read only property \'' + prop + '\' of ' + obj);
+	        }
+	        var originalConfigurableFlag = desc.configurable;
+	        if (prop !== 'prototype') {
+	            desc = rewriteDescriptor(obj, prop, desc);
+	        }
+	        return _tryDefineProperty(obj, prop, desc, originalConfigurableFlag);
+	    };
+	    Object.defineProperties = function (obj, props) {
+	        Object.keys(props).forEach(function (prop) {
+	            Object.defineProperty(obj, prop, props[prop]);
+	        });
+	        return obj;
+	    };
+	    Object.create = function (obj, proto) {
+	        if (typeof proto === 'object' && !Object.isFrozen(proto)) {
+	            Object.keys(proto).forEach(function (prop) {
+	                proto[prop] = rewriteDescriptor(obj, prop, proto[prop]);
+	            });
+	        }
+	        return _create(obj, proto);
+	    };
+	    Object.getOwnPropertyDescriptor = function (obj, prop) {
+	        var desc = _getOwnPropertyDescriptor(obj, prop);
+	        if (isUnconfigurable(obj, prop)) {
+	            desc.configurable = false;
+	        }
+	        return desc;
+	    };
+	}
+	
+	function _redefineProperty(obj, prop, desc) {
+	    var originalConfigurableFlag = desc.configurable;
+	    desc = rewriteDescriptor(obj, prop, desc);
+	    return _tryDefineProperty(obj, prop, desc, originalConfigurableFlag);
+	}
+	
+	function isUnconfigurable(obj, prop) {
+	    return obj && obj[unconfigurablesKey] && obj[unconfigurablesKey][prop];
+	}
+	function rewriteDescriptor(obj, prop, desc) {
+	    desc.configurable = true;
+	    if (!desc.configurable) {
+	        if (!obj[unconfigurablesKey]) {
+	            _defineProperty(obj, unconfigurablesKey, { writable: true, value: {} });
+	        }
+	        obj[unconfigurablesKey][prop] = true;
+	    }
+	    return desc;
+	}
+	function _tryDefineProperty(obj, prop, desc, originalConfigurableFlag) {
+	    try {
+	        return _defineProperty(obj, prop, desc);
+	    }
+	    catch (e) {
+	        if (desc.configurable) {
+	            // In case of errors, when the configurable flag was likely set by rewriteDescriptor(), let's
+	            // retry with the original flag value
+	            if (typeof originalConfigurableFlag == 'undefined') {
+	                delete desc.configurable;
+	            }
+	            else {
+	                desc.configurable = originalConfigurableFlag;
+	            }
+	            try {
+	                return _defineProperty(obj, prop, desc);
+	            }
+	            catch (e) {
+	                var descJson = null;
+	                try {
+	                    descJson = JSON.stringify(desc);
+	                }
+	                catch (e) {
+	                    descJson = descJson.toString();
+	                }
+	                console.log("Attempting to configure '" + prop + "' with descriptor '" + descJson + "' on object '" + obj + "' and got error, giving up: " + e);
+	            }
+	        }
+	        else {
+	            throw e;
+	        }
+	    }
+	}
+	
+	/**
+	 * @license
+	 * Copyright Google Inc. All Rights Reserved.
+	 *
+	 * Use of this source code is governed by an MIT-style license that can be
+	 * found in the LICENSE file at https://angular.io/license
+	 */
+	var WTF_ISSUE_555 = 'Anchor,Area,Audio,BR,Base,BaseFont,Body,Button,Canvas,Content,DList,Directory,Div,Embed,FieldSet,Font,Form,Frame,FrameSet,HR,Head,Heading,Html,IFrame,Image,Input,Keygen,LI,Label,Legend,Link,Map,Marquee,Media,Menu,Meta,Meter,Mod,OList,Object,OptGroup,Option,Output,Paragraph,Pre,Progress,Quote,Script,Select,Source,Span,Style,TableCaption,TableCell,TableCol,Table,TableRow,TableSection,TextArea,Title,Track,UList,Unknown,Video';
+	var NO_EVENT_TARGET = 'ApplicationCache,EventSource,FileReader,InputMethodContext,MediaController,MessagePort,Node,Performance,SVGElementInstance,SharedWorker,TextTrack,TextTrackCue,TextTrackList,WebKitNamedFlow,Window,Worker,WorkerGlobalScope,XMLHttpRequest,XMLHttpRequestEventTarget,XMLHttpRequestUpload,IDBRequest,IDBOpenDBRequest,IDBDatabase,IDBTransaction,IDBCursor,DBIndex'
+	    .split(',');
+	var EVENT_TARGET = 'EventTarget';
+	function eventTargetPatch(_global) {
+	    var apis = [];
+	    var isWtf = _global['wtf'];
+	    if (isWtf) {
+	        // Workaround for: https://github.com/google/tracing-framework/issues/555
+	        apis = WTF_ISSUE_555.split(',').map(function (v) { return 'HTML' + v + 'Element'; }).concat(NO_EVENT_TARGET);
+	    }
+	    else if (_global[EVENT_TARGET]) {
+	        apis.push(EVENT_TARGET);
+	    }
+	    else {
+	        // Note: EventTarget is not available in all browsers,
+	        // if it's not available, we instead patch the APIs in the IDL that inherit from EventTarget
+	        apis = NO_EVENT_TARGET;
+	    }
+	    for (var i = 0; i < apis.length; i++) {
+	        var type = _global[apis[i]];
+	        patchEventTargetMethods(type && type.prototype);
+	    }
+	}
+	
+	/**
+	 * @license
+	 * Copyright Google Inc. All Rights Reserved.
+	 *
+	 * Use of this source code is governed by an MIT-style license that can be
+	 * found in the LICENSE file at https://angular.io/license
+	 */
+	// we have to patch the instance since the proto is non-configurable
+	function apply(_global) {
+	    var WS = _global.WebSocket;
+	    // On Safari window.EventTarget doesn't exist so need to patch WS add/removeEventListener
+	    // On older Chrome, no need since EventTarget was already patched
+	    if (!_global.EventTarget) {
+	        patchEventTargetMethods(WS.prototype);
+	    }
+	    _global.WebSocket = function (a, b) {
+	        var socket = arguments.length > 1 ? new WS(a, b) : new WS(a);
+	        var proxySocket;
+	        // Safari 7.0 has non-configurable own 'onmessage' and friends properties on the socket instance
+	        var onmessageDesc = Object.getOwnPropertyDescriptor(socket, 'onmessage');
+	        if (onmessageDesc && onmessageDesc.configurable === false) {
+	            proxySocket = Object.create(socket);
+	            ['addEventListener', 'removeEventListener', 'send', 'close'].forEach(function (propName) {
+	                proxySocket[propName] = function () {
+	                    return socket[propName].apply(socket, arguments);
+	                };
+	            });
+	        }
+	        else {
+	            // we can patch the real socket
+	            proxySocket = socket;
+	        }
+	        patchOnProperties(proxySocket, ['close', 'error', 'message', 'open']);
+	        return proxySocket;
+	    };
+	    for (var prop in WS) {
+	        _global.WebSocket[prop] = WS[prop];
+	    }
+	}
+	
+	/**
+	 * @license
+	 * Copyright Google Inc. All Rights Reserved.
+	 *
+	 * Use of this source code is governed by an MIT-style license that can be
+	 * found in the LICENSE file at https://angular.io/license
+	 */
+	var eventNames = 'copy cut paste abort blur focus canplay canplaythrough change click contextmenu dblclick drag dragend dragenter dragleave dragover dragstart drop durationchange emptied ended input invalid keydown keypress keyup load loadeddata loadedmetadata loadstart message mousedown mouseenter mouseleave mousemove mouseout mouseover mouseup pause play playing progress ratechange reset scroll seeked seeking select show stalled submit suspend timeupdate volumechange waiting mozfullscreenchange mozfullscreenerror mozpointerlockchange mozpointerlockerror error webglcontextrestored webglcontextlost webglcontextcreationerror'
+	    .split(' ');
+	function propertyDescriptorPatch(_global) {
+	    if (isNode) {
+	        return;
+	    }
+	    var supportsWebSocket = typeof WebSocket !== 'undefined';
+	    if (canPatchViaPropertyDescriptor()) {
+	        // for browsers that we can patch the descriptor:  Chrome & Firefox
+	        if (isBrowser) {
+	            patchOnProperties(HTMLElement.prototype, eventNames);
+	        }
+	        patchOnProperties(XMLHttpRequest.prototype, null);
+	        if (typeof IDBIndex !== 'undefined') {
+	            patchOnProperties(IDBIndex.prototype, null);
+	            patchOnProperties(IDBRequest.prototype, null);
+	            patchOnProperties(IDBOpenDBRequest.prototype, null);
+	            patchOnProperties(IDBDatabase.prototype, null);
+	            patchOnProperties(IDBTransaction.prototype, null);
+	            patchOnProperties(IDBCursor.prototype, null);
+	        }
+	        if (supportsWebSocket) {
+	            patchOnProperties(WebSocket.prototype, null);
+	        }
+	    }
+	    else {
+	        // Safari, Android browsers (Jelly Bean)
+	        patchViaCapturingAllTheEvents();
+	        patchClass('XMLHttpRequest');
+	        if (supportsWebSocket) {
+	            apply(_global);
+	        }
+	    }
+	}
+	function canPatchViaPropertyDescriptor() {
+	    if (isBrowser && !Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'onclick') &&
+	        typeof Element !== 'undefined') {
+	        // WebKit https://bugs.webkit.org/show_bug.cgi?id=134364
+	        // IDL interface attributes are not configurable
+	        var desc = Object.getOwnPropertyDescriptor(Element.prototype, 'onclick');
+	        if (desc && !desc.configurable)
+	            return false;
+	    }
+	    Object.defineProperty(XMLHttpRequest.prototype, 'onreadystatechange', {
+	        get: function () {
+	            return true;
+	        }
+	    });
+	    var req = new XMLHttpRequest();
+	    var result = !!req.onreadystatechange;
+	    Object.defineProperty(XMLHttpRequest.prototype, 'onreadystatechange', {});
+	    return result;
+	}
+	
+	var unboundKey = zoneSymbol('unbound');
+	// Whenever any eventListener fires, we check the eventListener target and all parents
+	// for `onwhatever` properties and replace them with zone-bound functions
+	// - Chrome (for now)
+	function patchViaCapturingAllTheEvents() {
+	    var _loop_1 = function(i) {
+	        var property = eventNames[i];
+	        var onproperty = 'on' + property;
+	        self.addEventListener(property, function (event) {
+	            var elt = event.target, bound, source;
+	            if (elt) {
+	                source = elt.constructor['name'] + '.' + onproperty;
+	            }
+	            else {
+	                source = 'unknown.' + onproperty;
+	            }
+	            while (elt) {
+	                if (elt[onproperty] && !elt[onproperty][unboundKey]) {
+	                    bound = Zone.current.wrap(elt[onproperty], source);
+	                    bound[unboundKey] = elt[onproperty];
+	                    elt[onproperty] = bound;
+	                }
+	                elt = elt.parentElement;
+	            }
+	        }, true);
+	    };
+	    for (var i = 0; i < eventNames.length; i++) {
+	        _loop_1(i);
+	    }
+	    
+	}
+	
+	/**
+	 * @license
+	 * Copyright Google Inc. All Rights Reserved.
+	 *
+	 * Use of this source code is governed by an MIT-style license that can be
+	 * found in the LICENSE file at https://angular.io/license
+	 */
+	function registerElementPatch(_global) {
+	    if (!isBrowser || !('registerElement' in _global.document)) {
+	        return;
+	    }
+	    var _registerElement = document.registerElement;
+	    var callbacks = ['createdCallback', 'attachedCallback', 'detachedCallback', 'attributeChangedCallback'];
+	    document.registerElement = function (name, opts) {
+	        if (opts && opts.prototype) {
+	            callbacks.forEach(function (callback) {
+	                var source = 'Document.registerElement::' + callback;
+	                if (opts.prototype.hasOwnProperty(callback)) {
+	                    var descriptor = Object.getOwnPropertyDescriptor(opts.prototype, callback);
+	                    if (descriptor && descriptor.value) {
+	                        descriptor.value = Zone.current.wrap(descriptor.value, source);
+	                        _redefineProperty(opts.prototype, callback, descriptor);
+	                    }
+	                    else {
+	                        opts.prototype[callback] = Zone.current.wrap(opts.prototype[callback], source);
+	                    }
+	                }
+	                else if (opts.prototype[callback]) {
+	                    opts.prototype[callback] = Zone.current.wrap(opts.prototype[callback], source);
+	                }
+	            });
+	        }
+	        return _registerElement.apply(document, [name, opts]);
+	    };
+	}
+	
+	/**
+	 * @license
+	 * Copyright Google Inc. All Rights Reserved.
+	 *
+	 * Use of this source code is governed by an MIT-style license that can be
+	 * found in the LICENSE file at https://angular.io/license
+	 */
+	var set = 'set';
+	var clear = 'clear';
+	var blockingMethods = ['alert', 'prompt', 'confirm'];
+	var _global = typeof window === 'object' && window || typeof self === 'object' && self || global;
+	patchTimer(_global, set, clear, 'Timeout');
+	patchTimer(_global, set, clear, 'Interval');
+	patchTimer(_global, set, clear, 'Immediate');
+	patchTimer(_global, 'request', 'cancel', 'AnimationFrame');
+	patchTimer(_global, 'mozRequest', 'mozCancel', 'AnimationFrame');
+	patchTimer(_global, 'webkitRequest', 'webkitCancel', 'AnimationFrame');
+	for (var i = 0; i < blockingMethods.length; i++) {
+	    var name = blockingMethods[i];
+	    patchMethod(_global, name, function (delegate, symbol, name) {
+	        return function (s, args) {
+	            return Zone.current.run(delegate, _global, args, name);
+	        };
+	    });
+	}
+	eventTargetPatch(_global);
+	propertyDescriptorPatch(_global);
+	patchClass('MutationObserver');
+	patchClass('WebKitMutationObserver');
+	patchClass('FileReader');
+	propertyPatch();
+	registerElementPatch(_global);
+	// Treat XMLHTTPRequest as a macrotask.
+	patchXHR(_global);
+	var XHR_TASK = zoneSymbol('xhrTask');
+	var XHR_SYNC = zoneSymbol('xhrSync');
+	function patchXHR(window) {
+	    function findPendingTask(target) {
+	        var pendingTask = target[XHR_TASK];
+	        return pendingTask;
+	    }
+	    function scheduleTask(task) {
+	        var data = task.data;
+	        data.target.addEventListener('readystatechange', function () {
+	            if (data.target.readyState === data.target.DONE) {
+	                if (!data.aborted) {
+	                    task.invoke();
+	                }
+	            }
+	        });
+	        var storedTask = data.target[XHR_TASK];
+	        if (!storedTask) {
+	            data.target[XHR_TASK] = task;
+	        }
+	        sendNative.apply(data.target, data.args);
+	        return task;
+	    }
+	    function placeholderCallback() { }
+	    function clearTask(task) {
+	        var data = task.data;
+	        // Note - ideally, we would call data.target.removeEventListener here, but it's too late
+	        // to prevent it from firing. So instead, we store info for the event listener.
+	        data.aborted = true;
+	        return abortNative.apply(data.target, data.args);
+	    }
+	    var openNative = patchMethod(window.XMLHttpRequest.prototype, 'open', function () { return function (self, args) {
+	        self[XHR_SYNC] = args[2] == false;
+	        return openNative.apply(self, args);
+	    }; });
+	    var sendNative = patchMethod(window.XMLHttpRequest.prototype, 'send', function () { return function (self, args) {
+	        var zone = Zone.current;
+	        if (self[XHR_SYNC]) {
+	            // if the XHR is sync there is no task to schedule, just execute the code.
+	            return sendNative.apply(self, args);
+	        }
+	        else {
+	            var options = { target: self, isPeriodic: false, delay: null, args: args, aborted: false };
+	            return zone.scheduleMacroTask('XMLHttpRequest.send', placeholderCallback, options, scheduleTask, clearTask);
+	        }
+	    }; });
+	    var abortNative = patchMethod(window.XMLHttpRequest.prototype, 'abort', function (delegate) { return function (self, args) {
+	        var task = findPendingTask(self);
+	        if (task && typeof task.type == 'string') {
+	            // If the XHR has already completed, do nothing.
+	            if (task.cancelFn == null) {
+	                return;
+	            }
+	            task.zone.cancelTask(task);
+	        }
+	        // Otherwise, we are trying to abort an XHR which has not yet been sent, so there is no task
+	        // to cancel. Do nothing.
+	    }; });
+	}
+	/// GEO_LOCATION
+	if (_global['navigator'] && _global['navigator'].geolocation) {
+	    patchPrototype(_global['navigator'].geolocation, ['getCurrentPosition', 'watchPosition']);
+	}
+	
+	})));
+	
+	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }()), __webpack_require__(2)))
+
+/***/ },
+/* 7 */
+/***/ function(module, exports) {
+
+	/* WEBPACK VAR INJECTION */(function(global) {/*! *****************************************************************************
+	Copyright (C) Microsoft. All rights reserved.
+	Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+	this file except in compliance with the License. You may obtain a copy of the
+	License at http://www.apache.org/licenses/LICENSE-2.0
+	
+	THIS CODE IS PROVIDED ON AN *AS IS* BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+	KIND, EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED
+	WARRANTIES OR CONDITIONS OF TITLE, FITNESS FOR A PARTICULAR PURPOSE,
+	MERCHANTABLITY OR NON-INFRINGEMENT.
+	
+	See the Apache Version 2.0 License for specific language governing permissions
+	and limitations under the License.
+	***************************************************************************** */
+	var Reflect;
+	(function (Reflect) {
+	    "use strict";
+	    var hasOwn = Object.prototype.hasOwnProperty;
+	    // feature test for Object.create support
+	    var supportsCreate = typeof Object.create === "function";
+	    // feature test for __proto__ support
+	    var supportsProto = { __proto__: [] } instanceof Array;
+	    // feature test for Symbol support
+	    var supportsSymbol = typeof Symbol === "function";
+	    var toPrimitiveSymbol = supportsSymbol && typeof Symbol.toPrimitive !== "undefined" ? Symbol.toPrimitive : "@@toPrimitive";
+	    var iteratorSymbol = supportsSymbol && typeof Symbol.iterator !== "undefined" ? Symbol.iterator : "@@iterator";
+	    // create an object in dictionary mode (a.k.a. "slow" mode in v8)
+	    var createDictionary = supportsCreate ? function () { return MakeDictionary(Object.create(null)); } :
+	        supportsProto ? function () { return MakeDictionary({ __proto__: null }); } :
+	            function () { return MakeDictionary({}); };
+	    var HashMap;
+	    (function (HashMap) {
+	        var downLevel = !supportsCreate && !supportsProto;
+	        HashMap.has = downLevel
+	            ? function (map, key) { return hasOwn.call(map, key); }
+	            : function (map, key) { return key in map; };
+	        HashMap.get = downLevel
+	            ? function (map, key) { return hasOwn.call(map, key) ? map[key] : undefined; }
+	            : function (map, key) { return map[key]; };
+	    })(HashMap || (HashMap = {}));
+	    // Load global or shim versions of Map, Set, and WeakMap
+	    var functionPrototype = Object.getPrototypeOf(Function);
+	    var _Map = typeof Map === "function" && typeof Map.prototype.entries === "function" ? Map : CreateMapPolyfill();
+	    var _Set = typeof Set === "function" && typeof Set.prototype.entries === "function" ? Set : CreateSetPolyfill();
+	    var _WeakMap = typeof WeakMap === "function" ? WeakMap : CreateWeakMapPolyfill();
+	    // [[Metadata]] internal slot
+	    var Metadata = new _WeakMap();
+	    /**
+	      * Applies a set of decorators to a property of a target object.
+	      * @param decorators An array of decorators.
+	      * @param target The target object.
+	      * @param targetKey (Optional) The property key to decorate.
+	      * @param targetDescriptor (Optional) The property descriptor for the target key
+	      * @remarks Decorators are applied in reverse order.
+	      * @example
+	      *
+	      *     class Example {
+	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
+	      *         // static staticProperty;
+	      *         // property;
+	      *
+	      *         constructor(p) { }
+	      *         static staticMethod(p) { }
+	      *         method(p) { }
+	      *     }
+	      *
+	      *     // constructor
+	      *     Example = Reflect.decorate(decoratorsArray, Example);
+	      *
+	      *     // property (on constructor)
+	      *     Reflect.decorate(decoratorsArray, Example, "staticProperty");
+	      *
+	      *     // property (on prototype)
+	      *     Reflect.decorate(decoratorsArray, Example.prototype, "property");
+	      *
+	      *     // method (on constructor)
+	      *     Object.defineProperty(Example, "staticMethod",
+	      *         Reflect.decorate(decoratorsArray, Example, "staticMethod",
+	      *             Object.getOwnPropertyDescriptor(Example, "staticMethod")));
+	      *
+	      *     // method (on prototype)
+	      *     Object.defineProperty(Example.prototype, "method",
+	      *         Reflect.decorate(decoratorsArray, Example.prototype, "method",
+	      *             Object.getOwnPropertyDescriptor(Example.prototype, "method")));
+	      *
+	      */
+	    function decorate(decorators, target, targetKey, targetDescriptor) {
+	        if (!IsUndefined(targetKey)) {
+	            if (!IsArray(decorators))
+	                throw new TypeError();
+	            if (!IsObject(target))
+	                throw new TypeError();
+	            if (!IsObject(targetDescriptor) && !IsUndefined(targetDescriptor) && !IsNull(targetDescriptor))
+	                throw new TypeError();
+	            if (IsNull(targetDescriptor))
+	                targetDescriptor = undefined;
+	            targetKey = ToPropertyKey(targetKey);
+	            return DecorateProperty(decorators, target, targetKey, targetDescriptor);
+	        }
+	        else {
+	            if (!IsArray(decorators))
+	                throw new TypeError();
+	            if (!IsConstructor(target))
+	                throw new TypeError();
+	            return DecorateConstructor(decorators, target);
+	        }
+	    }
+	    Reflect.decorate = decorate;
+	    /**
+	      * A default metadata decorator factory that can be used on a class, class member, or parameter.
+	      * @param metadataKey The key for the metadata entry.
+	      * @param metadataValue The value for the metadata entry.
+	      * @returns A decorator function.
+	      * @remarks
+	      * If `metadataKey` is already defined for the target and target key, the
+	      * metadataValue for that key will be overwritten.
+	      * @example
+	      *
+	      *     // constructor
+	      *     @Reflect.metadata(key, value)
+	      *     class Example {
+	      *     }
+	      *
+	      *     // property (on constructor, TypeScript only)
+	      *     class Example {
+	      *         @Reflect.metadata(key, value)
+	      *         static staticProperty;
+	      *     }
+	      *
+	      *     // property (on prototype, TypeScript only)
+	      *     class Example {
+	      *         @Reflect.metadata(key, value)
+	      *         property;
+	      *     }
+	      *
+	      *     // method (on constructor)
+	      *     class Example {
+	      *         @Reflect.metadata(key, value)
+	      *         static staticMethod() { }
+	      *     }
+	      *
+	      *     // method (on prototype)
+	      *     class Example {
+	      *         @Reflect.metadata(key, value)
+	      *         method() { }
+	      *     }
+	      *
+	      */
+	    function metadata(metadataKey, metadataValue) {
+	        function decorator(target, targetKey) {
+	            if (!IsUndefined(targetKey)) {
+	                if (!IsObject(target))
+	                    throw new TypeError();
+	                targetKey = ToPropertyKey(targetKey);
+	                OrdinaryDefineOwnMetadata(metadataKey, metadataValue, target, targetKey);
+	            }
+	            else {
+	                if (!IsConstructor(target))
+	                    throw new TypeError();
+	                OrdinaryDefineOwnMetadata(metadataKey, metadataValue, target, /*targetKey*/ undefined);
+	            }
+	        }
+	        return decorator;
+	    }
+	    Reflect.metadata = metadata;
+	    /**
+	      * Define a unique metadata entry on the target.
+	      * @param metadataKey A key used to store and retrieve metadata.
+	      * @param metadataValue A value that contains attached metadata.
+	      * @param target The target object on which to define metadata.
+	      * @param targetKey (Optional) The property key for the target.
+	      * @example
+	      *
+	      *     class Example {
+	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
+	      *         // static staticProperty;
+	      *         // property;
+	      *
+	      *         constructor(p) { }
+	      *         static staticMethod(p) { }
+	      *         method(p) { }
+	      *     }
+	      *
+	      *     // constructor
+	      *     Reflect.defineMetadata("custom:annotation", options, Example);
+	      *
+	      *     // property (on constructor)
+	      *     Reflect.defineMetadata("custom:annotation", options, Example, "staticProperty");
+	      *
+	      *     // property (on prototype)
+	      *     Reflect.defineMetadata("custom:annotation", options, Example.prototype, "property");
+	      *
+	      *     // method (on constructor)
+	      *     Reflect.defineMetadata("custom:annotation", options, Example, "staticMethod");
+	      *
+	      *     // method (on prototype)
+	      *     Reflect.defineMetadata("custom:annotation", options, Example.prototype, "method");
+	      *
+	      *     // decorator factory as metadata-producing annotation.
+	      *     function MyAnnotation(options): Decorator {
+	      *         return (target, key?) => Reflect.defineMetadata("custom:annotation", options, target, key);
+	      *     }
+	      *
+	      */
+	    function defineMetadata(metadataKey, metadataValue, target, targetKey) {
+	        if (!IsObject(target))
+	            throw new TypeError();
+	        if (!IsUndefined(targetKey))
+	            targetKey = ToPropertyKey(targetKey);
+	        return OrdinaryDefineOwnMetadata(metadataKey, metadataValue, target, targetKey);
+	    }
+	    Reflect.defineMetadata = defineMetadata;
+	    /**
+	      * Gets a value indicating whether the target object or its prototype chain has the provided metadata key defined.
+	      * @param metadataKey A key used to store and retrieve metadata.
+	      * @param target The target object on which the metadata is defined.
+	      * @param targetKey (Optional) The property key for the target.
+	      * @returns `true` if the metadata key was defined on the target object or its prototype chain; otherwise, `false`.
+	      * @example
+	      *
+	      *     class Example {
+	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
+	      *         // static staticProperty;
+	      *         // property;
+	      *
+	      *         constructor(p) { }
+	      *         static staticMethod(p) { }
+	      *         method(p) { }
+	      *     }
+	      *
+	      *     // constructor
+	      *     result = Reflect.hasMetadata("custom:annotation", Example);
+	      *
+	      *     // property (on constructor)
+	      *     result = Reflect.hasMetadata("custom:annotation", Example, "staticProperty");
+	      *
+	      *     // property (on prototype)
+	      *     result = Reflect.hasMetadata("custom:annotation", Example.prototype, "property");
+	      *
+	      *     // method (on constructor)
+	      *     result = Reflect.hasMetadata("custom:annotation", Example, "staticMethod");
+	      *
+	      *     // method (on prototype)
+	      *     result = Reflect.hasMetadata("custom:annotation", Example.prototype, "method");
+	      *
+	      */
+	    function hasMetadata(metadataKey, target, targetKey) {
+	        if (!IsObject(target))
+	            throw new TypeError();
+	        if (!IsUndefined(targetKey))
+	            targetKey = ToPropertyKey(targetKey);
+	        return OrdinaryHasMetadata(metadataKey, target, targetKey);
+	    }
+	    Reflect.hasMetadata = hasMetadata;
+	    /**
+	      * Gets a value indicating whether the target object has the provided metadata key defined.
+	      * @param metadataKey A key used to store and retrieve metadata.
+	      * @param target The target object on which the metadata is defined.
+	      * @param targetKey (Optional) The property key for the target.
+	      * @returns `true` if the metadata key was defined on the target object; otherwise, `false`.
+	      * @example
+	      *
+	      *     class Example {
+	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
+	      *         // static staticProperty;
+	      *         // property;
+	      *
+	      *         constructor(p) { }
+	      *         static staticMethod(p) { }
+	      *         method(p) { }
+	      *     }
+	      *
+	      *     // constructor
+	      *     result = Reflect.hasOwnMetadata("custom:annotation", Example);
+	      *
+	      *     // property (on constructor)
+	      *     result = Reflect.hasOwnMetadata("custom:annotation", Example, "staticProperty");
+	      *
+	      *     // property (on prototype)
+	      *     result = Reflect.hasOwnMetadata("custom:annotation", Example.prototype, "property");
+	      *
+	      *     // method (on constructor)
+	      *     result = Reflect.hasOwnMetadata("custom:annotation", Example, "staticMethod");
+	      *
+	      *     // method (on prototype)
+	      *     result = Reflect.hasOwnMetadata("custom:annotation", Example.prototype, "method");
+	      *
+	      */
+	    function hasOwnMetadata(metadataKey, target, targetKey) {
+	        if (!IsObject(target))
+	            throw new TypeError();
+	        if (!IsUndefined(targetKey))
+	            targetKey = ToPropertyKey(targetKey);
+	        return OrdinaryHasOwnMetadata(metadataKey, target, targetKey);
+	    }
+	    Reflect.hasOwnMetadata = hasOwnMetadata;
+	    /**
+	      * Gets the metadata value for the provided metadata key on the target object or its prototype chain.
+	      * @param metadataKey A key used to store and retrieve metadata.
+	      * @param target The target object on which the metadata is defined.
+	      * @param targetKey (Optional) The property key for the target.
+	      * @returns The metadata value for the metadata key if found; otherwise, `undefined`.
+	      * @example
+	      *
+	      *     class Example {
+	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
+	      *         // static staticProperty;
+	      *         // property;
+	      *
+	      *         constructor(p) { }
+	      *         static staticMethod(p) { }
+	      *         method(p) { }
+	      *     }
+	      *
+	      *     // constructor
+	      *     result = Reflect.getMetadata("custom:annotation", Example);
+	      *
+	      *     // property (on constructor)
+	      *     result = Reflect.getMetadata("custom:annotation", Example, "staticProperty");
+	      *
+	      *     // property (on prototype)
+	      *     result = Reflect.getMetadata("custom:annotation", Example.prototype, "property");
+	      *
+	      *     // method (on constructor)
+	      *     result = Reflect.getMetadata("custom:annotation", Example, "staticMethod");
+	      *
+	      *     // method (on prototype)
+	      *     result = Reflect.getMetadata("custom:annotation", Example.prototype, "method");
+	      *
+	      */
+	    function getMetadata(metadataKey, target, targetKey) {
+	        if (!IsObject(target))
+	            throw new TypeError();
+	        if (!IsUndefined(targetKey))
+	            targetKey = ToPropertyKey(targetKey);
+	        return OrdinaryGetMetadata(metadataKey, target, targetKey);
+	    }
+	    Reflect.getMetadata = getMetadata;
+	    /**
+	      * Gets the metadata value for the provided metadata key on the target object.
+	      * @param metadataKey A key used to store and retrieve metadata.
+	      * @param target The target object on which the metadata is defined.
+	      * @param targetKey (Optional) The property key for the target.
+	      * @returns The metadata value for the metadata key if found; otherwise, `undefined`.
+	      * @example
+	      *
+	      *     class Example {
+	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
+	      *         // static staticProperty;
+	      *         // property;
+	      *
+	      *         constructor(p) { }
+	      *         static staticMethod(p) { }
+	      *         method(p) { }
+	      *     }
+	      *
+	      *     // constructor
+	      *     result = Reflect.getOwnMetadata("custom:annotation", Example);
+	      *
+	      *     // property (on constructor)
+	      *     result = Reflect.getOwnMetadata("custom:annotation", Example, "staticProperty");
+	      *
+	      *     // property (on prototype)
+	      *     result = Reflect.getOwnMetadata("custom:annotation", Example.prototype, "property");
+	      *
+	      *     // method (on constructor)
+	      *     result = Reflect.getOwnMetadata("custom:annotation", Example, "staticMethod");
+	      *
+	      *     // method (on prototype)
+	      *     result = Reflect.getOwnMetadata("custom:annotation", Example.prototype, "method");
+	      *
+	      */
+	    function getOwnMetadata(metadataKey, target, targetKey) {
+	        if (!IsObject(target))
+	            throw new TypeError();
+	        if (!IsUndefined(targetKey))
+	            targetKey = ToPropertyKey(targetKey);
+	        return OrdinaryGetOwnMetadata(metadataKey, target, targetKey);
+	    }
+	    Reflect.getOwnMetadata = getOwnMetadata;
+	    /**
+	      * Gets the metadata keys defined on the target object or its prototype chain.
+	      * @param target The target object on which the metadata is defined.
+	      * @param targetKey (Optional) The property key for the target.
+	      * @returns An array of unique metadata keys.
+	      * @example
+	      *
+	      *     class Example {
+	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
+	      *         // static staticProperty;
+	      *         // property;
+	      *
+	      *         constructor(p) { }
+	      *         static staticMethod(p) { }
+	      *         method(p) { }
+	      *     }
+	      *
+	      *     // constructor
+	      *     result = Reflect.getMetadataKeys(Example);
+	      *
+	      *     // property (on constructor)
+	      *     result = Reflect.getMetadataKeys(Example, "staticProperty");
+	      *
+	      *     // property (on prototype)
+	      *     result = Reflect.getMetadataKeys(Example.prototype, "property");
+	      *
+	      *     // method (on constructor)
+	      *     result = Reflect.getMetadataKeys(Example, "staticMethod");
+	      *
+	      *     // method (on prototype)
+	      *     result = Reflect.getMetadataKeys(Example.prototype, "method");
+	      *
+	      */
+	    function getMetadataKeys(target, targetKey) {
+	        if (!IsObject(target))
+	            throw new TypeError();
+	        if (!IsUndefined(targetKey))
+	            targetKey = ToPropertyKey(targetKey);
+	        return OrdinaryMetadataKeys(target, targetKey);
+	    }
+	    Reflect.getMetadataKeys = getMetadataKeys;
+	    /**
+	      * Gets the unique metadata keys defined on the target object.
+	      * @param target The target object on which the metadata is defined.
+	      * @param targetKey (Optional) The property key for the target.
+	      * @returns An array of unique metadata keys.
+	      * @example
+	      *
+	      *     class Example {
+	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
+	      *         // static staticProperty;
+	      *         // property;
+	      *
+	      *         constructor(p) { }
+	      *         static staticMethod(p) { }
+	      *         method(p) { }
+	      *     }
+	      *
+	      *     // constructor
+	      *     result = Reflect.getOwnMetadataKeys(Example);
+	      *
+	      *     // property (on constructor)
+	      *     result = Reflect.getOwnMetadataKeys(Example, "staticProperty");
+	      *
+	      *     // property (on prototype)
+	      *     result = Reflect.getOwnMetadataKeys(Example.prototype, "property");
+	      *
+	      *     // method (on constructor)
+	      *     result = Reflect.getOwnMetadataKeys(Example, "staticMethod");
+	      *
+	      *     // method (on prototype)
+	      *     result = Reflect.getOwnMetadataKeys(Example.prototype, "method");
+	      *
+	      */
+	    function getOwnMetadataKeys(target, targetKey) {
+	        if (!IsObject(target))
+	            throw new TypeError();
+	        if (!IsUndefined(targetKey))
+	            targetKey = ToPropertyKey(targetKey);
+	        return OrdinaryOwnMetadataKeys(target, targetKey);
+	    }
+	    Reflect.getOwnMetadataKeys = getOwnMetadataKeys;
+	    /**
+	      * Deletes the metadata entry from the target object with the provided key.
+	      * @param metadataKey A key used to store and retrieve metadata.
+	      * @param target The target object on which the metadata is defined.
+	      * @param targetKey (Optional) The property key for the target.
+	      * @returns `true` if the metadata entry was found and deleted; otherwise, false.
+	      * @example
+	      *
+	      *     class Example {
+	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
+	      *         // static staticProperty;
+	      *         // property;
+	      *
+	      *         constructor(p) { }
+	      *         static staticMethod(p) { }
+	      *         method(p) { }
+	      *     }
+	      *
+	      *     // constructor
+	      *     result = Reflect.deleteMetadata("custom:annotation", Example);
+	      *
+	      *     // property (on constructor)
+	      *     result = Reflect.deleteMetadata("custom:annotation", Example, "staticProperty");
+	      *
+	      *     // property (on prototype)
+	      *     result = Reflect.deleteMetadata("custom:annotation", Example.prototype, "property");
+	      *
+	      *     // method (on constructor)
+	      *     result = Reflect.deleteMetadata("custom:annotation", Example, "staticMethod");
+	      *
+	      *     // method (on prototype)
+	      *     result = Reflect.deleteMetadata("custom:annotation", Example.prototype, "method");
+	      *
+	      */
+	    function deleteMetadata(metadataKey, target, targetKey) {
+	        // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#deletemetadata-metadatakey-p-
+	        if (!IsObject(target))
+	            throw new TypeError();
+	        if (!IsUndefined(targetKey))
+	            targetKey = ToPropertyKey(targetKey);
+	        var metadataMap = GetOrCreateMetadataMap(target, targetKey, /*create*/ false);
+	        if (IsUndefined(metadataMap))
+	            return false;
+	        if (!metadataMap.delete(metadataKey))
+	            return false;
+	        if (metadataMap.size > 0)
+	            return true;
+	        var targetMetadata = Metadata.get(target);
+	        targetMetadata.delete(targetKey);
+	        if (targetMetadata.size > 0)
+	            return true;
+	        Metadata.delete(target);
+	        return true;
+	    }
+	    Reflect.deleteMetadata = deleteMetadata;
+	    function DecorateConstructor(decorators, target) {
+	        for (var i = decorators.length - 1; i >= 0; --i) {
+	            var decorator = decorators[i];
+	            var decorated = decorator(target);
+	            if (!IsUndefined(decorated) && !IsNull(decorated)) {
+	                if (!IsConstructor(decorated))
+	                    throw new TypeError();
+	                target = decorated;
+	            }
+	        }
+	        return target;
+	    }
+	    function DecorateProperty(decorators, target, propertyKey, descriptor) {
+	        for (var i = decorators.length - 1; i >= 0; --i) {
+	            var decorator = decorators[i];
+	            var decorated = decorator(target, propertyKey, descriptor);
+	            if (!IsUndefined(decorated) && !IsNull(decorated)) {
+	                if (!IsObject(decorated))
+	                    throw new TypeError();
+	                descriptor = decorated;
+	            }
+	        }
+	        return descriptor;
+	    }
+	    function GetOrCreateMetadataMap(O, P, Create) {
+	        var targetMetadata = Metadata.get(O);
+	        if (IsUndefined(targetMetadata)) {
+	            if (!Create)
+	                return undefined;
+	            targetMetadata = new _Map();
+	            Metadata.set(O, targetMetadata);
+	        }
+	        var metadataMap = targetMetadata.get(P);
+	        if (IsUndefined(metadataMap)) {
+	            if (!Create)
+	                return undefined;
+	            metadataMap = new _Map();
+	            targetMetadata.set(P, metadataMap);
+	        }
+	        return metadataMap;
+	    }
+	    // Ordinary Object Internal Methods and Internal Slots
+	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinary-object-internal-methods-and-internal-slots
+	    // OrdinaryHasMetadata(MetadataKey, O, P)
+	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinaryhasmetadata--metadatakey-o-p-
+	    function OrdinaryHasMetadata(MetadataKey, O, P) {
+	        var hasOwn = OrdinaryHasOwnMetadata(MetadataKey, O, P);
+	        if (hasOwn)
+	            return true;
+	        var parent = OrdinaryGetPrototypeOf(O);
+	        if (!IsNull(parent))
+	            return OrdinaryHasMetadata(MetadataKey, parent, P);
+	        return false;
+	    }
+	    // OrdinaryHasOwnMetadata(MetadataKey, O, P)
+	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinaryhasownmetadata--metadatakey-o-p-
+	    function OrdinaryHasOwnMetadata(MetadataKey, O, P) {
+	        var metadataMap = GetOrCreateMetadataMap(O, P, /*create*/ false);
+	        if (IsUndefined(metadataMap))
+	            return false;
+	        return ToBoolean(metadataMap.has(MetadataKey));
+	    }
+	    // OrdinaryGetMetadata(MetadataKey, O, P)
+	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinarygetmetadata--metadatakey-o-p-
+	    function OrdinaryGetMetadata(MetadataKey, O, P) {
+	        var hasOwn = OrdinaryHasOwnMetadata(MetadataKey, O, P);
+	        if (hasOwn)
+	            return OrdinaryGetOwnMetadata(MetadataKey, O, P);
+	        var parent = OrdinaryGetPrototypeOf(O);
+	        if (!IsNull(parent))
+	            return OrdinaryGetMetadata(MetadataKey, parent, P);
+	        return undefined;
+	    }
+	    // OrdinaryGetOwnMetadata(MetadataKey, O, P)
+	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinarygetownmetadata--metadatakey-o-p-
+	    function OrdinaryGetOwnMetadata(MetadataKey, O, P) {
+	        var metadataMap = GetOrCreateMetadataMap(O, P, /*create*/ false);
+	        if (IsUndefined(metadataMap))
+	            return undefined;
+	        return metadataMap.get(MetadataKey);
+	    }
+	    // OrdinaryDefineOwnMetadata(MetadataKey, MetadataValue, O, P)
+	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinarydefineownmetadata--metadatakey-metadatavalue-o-p-
+	    function OrdinaryDefineOwnMetadata(MetadataKey, MetadataValue, O, P) {
+	        var metadataMap = GetOrCreateMetadataMap(O, P, /*create*/ true);
+	        metadataMap.set(MetadataKey, MetadataValue);
+	    }
+	    // OrdinaryMetadataKeys(O, P)
+	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinarymetadatakeys--o-p-
+	    function OrdinaryMetadataKeys(O, P) {
+	        var ownKeys = OrdinaryOwnMetadataKeys(O, P);
+	        var parent = OrdinaryGetPrototypeOf(O);
+	        if (parent === null)
+	            return ownKeys;
+	        var parentKeys = OrdinaryMetadataKeys(parent, P);
+	        if (parentKeys.length <= 0)
+	            return ownKeys;
+	        if (ownKeys.length <= 0)
+	            return parentKeys;
+	        var set = new _Set();
+	        var keys = [];
+	        for (var _i = 0, ownKeys_1 = ownKeys; _i < ownKeys_1.length; _i++) {
+	            var key = ownKeys_1[_i];
+	            var hasKey = set.has(key);
+	            if (!hasKey) {
+	                set.add(key);
+	                keys.push(key);
+	            }
+	        }
+	        for (var _a = 0, parentKeys_1 = parentKeys; _a < parentKeys_1.length; _a++) {
+	            var key = parentKeys_1[_a];
+	            var hasKey = set.has(key);
+	            if (!hasKey) {
+	                set.add(key);
+	                keys.push(key);
+	            }
+	        }
+	        return keys;
+	    }
+	    // OrdinaryOwnMetadataKeys(O, P)
+	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinaryownmetadatakeys--o-p-
+	    function OrdinaryOwnMetadataKeys(O, P) {
+	        var metadataMap = GetOrCreateMetadataMap(O, P, /*create*/ false);
+	        var keys = [];
+	        if (IsUndefined(metadataMap))
+	            return keys;
+	        var keysObj = metadataMap.keys();
+	        var iterator = GetIterator(keysObj);
+	        while (true) {
+	            var next = IteratorStep(iterator);
+	            try {
+	                if (!next)
+	                    return keys;
+	                var nextValue = IteratorValue(next);
+	                keys.push(nextValue);
+	            }
+	            catch (e) {
+	                try {
+	                    if (next) {
+	                        next = false;
+	                        IteratorClose(iterator);
+	                    }
+	                }
+	                finally {
+	                    throw e;
+	                }
+	            }
+	            finally {
+	                if (next)
+	                    IteratorClose(iterator);
+	            }
+	        }
+	    }
+	    // ECMAScript Specification
+	    // https://tc39.github.io/ecma262/
+	    // 6 ECMAScript Data Typ0es and Values
+	    // https://tc39.github.io/ecma262/#sec-ecmascript-data-types-and-values
+	    function Type(x) {
+	        if (x === null)
+	            return 1 /* Null */;
+	        switch (typeof x) {
+	            case "undefined": return 0 /* Undefined */;
+	            case "boolean": return 2 /* Boolean */;
+	            case "string": return 3 /* String */;
+	            case "symbol": return 4 /* Symbol */;
+	            case "number": return 5 /* Number */;
+	            case "object": return x === null ? 1 /* Null */ : 6 /* Object */;
+	            default: return 6 /* Object */;
+	        }
+	    }
+	    // 6.1.1 The Undefined Type
+	    // https://tc39.github.io/ecma262/#sec-ecmascript-language-types-undefined-type
+	    function IsUndefined(x) {
+	        return x === undefined;
+	    }
+	    // 6.1.2 The Null Type
+	    // https://tc39.github.io/ecma262/#sec-ecmascript-language-types-null-type
+	    function IsNull(x) {
+	        return x === null;
+	    }
+	    // 6.1.5 The Symbol Type
+	    // https://tc39.github.io/ecma262/#sec-ecmascript-language-types-symbol-type
+	    function IsSymbol(x) {
+	        return typeof x === "symbol";
+	    }
+	    // 6.1.7 The Object Type
+	    // https://tc39.github.io/ecma262/#sec-object-type
+	    function IsObject(x) {
+	        return typeof x === "object" ? x !== null : typeof x === "function";
+	    }
+	    // 7.1 Type Conversion
+	    // https://tc39.github.io/ecma262/#sec-type-conversion
+	    // 7.1.1 ToPrimitive(input [, PreferredType])
+	    // https://tc39.github.io/ecma262/#sec-toprimitive
+	    function ToPrimitive(input, PreferredType) {
+	        switch (Type(input)) {
+	            case 0 /* Undefined */: return input;
+	            case 1 /* Null */: return input;
+	            case 2 /* Boolean */: return input;
+	            case 3 /* String */: return input;
+	            case 4 /* Symbol */: return input;
+	            case 5 /* Number */: return input;
+	        }
+	        var hint = PreferredType === 3 /* String */ ? "string" : PreferredType === 5 /* Number */ ? "number" : "default";
+	        var exoticToPrim = GetMethod(input, toPrimitiveSymbol);
+	        if (exoticToPrim !== undefined) {
+	            var result = exoticToPrim.call(input, hint);
+	            if (IsObject(result))
+	                throw new TypeError();
+	            return result;
+	        }
+	        return OrdinaryToPrimitive(input, hint === "default" ? "number" : hint);
+	    }
+	    // 7.1.1.1 OrdinaryToPrimitive(O, hint)
+	    // https://tc39.github.io/ecma262/#sec-ordinarytoprimitive
+	    function OrdinaryToPrimitive(O, hint) {
+	        if (hint === "string") {
+	            var toString_1 = O.toString;
+	            if (IsCallable(toString_1)) {
+	                var result = toString_1.call(O);
+	                if (!IsObject(result))
+	                    return result;
+	            }
+	            var valueOf = O.valueOf;
+	            if (IsCallable(valueOf)) {
+	                var result = valueOf.call(O);
+	                if (!IsObject(result))
+	                    return result;
+	            }
+	        }
+	        else {
+	            var valueOf = O.valueOf;
+	            if (IsCallable(valueOf)) {
+	                var result = valueOf.call(O);
+	                if (!IsObject(result))
+	                    return result;
+	            }
+	            var toString_2 = O.toString;
+	            if (IsCallable(toString_2)) {
+	                var result = toString_2.call(O);
+	                if (!IsObject(result))
+	                    return result;
+	            }
+	        }
+	        throw new TypeError();
+	    }
+	    // 7.1.2 ToBoolean(argument)
+	    // https://tc39.github.io/ecma262/2016/#sec-toboolean
+	    function ToBoolean(argument) {
+	        return !!argument;
+	    }
+	    // 7.1.12 ToString(argument)
+	    // https://tc39.github.io/ecma262/#sec-tostring
+	    function ToString(argument) {
+	        return "" + argument;
+	    }
+	    // 7.1.14 ToPropertyKey(argument)
+	    // https://tc39.github.io/ecma262/#sec-topropertykey
+	    function ToPropertyKey(argument) {
+	        var key = ToPrimitive(argument, 3 /* String */);
+	        if (IsSymbol(key))
+	            return key;
+	        return ToString(key);
+	    }
+	    // 7.2 Testing and Comparison Operations
+	    // https://tc39.github.io/ecma262/#sec-testing-and-comparison-operations
+	    // 7.2.2 IsArray(argument)
+	    // https://tc39.github.io/ecma262/#sec-isarray
+	    function IsArray(argument) {
+	        return Array.isArray
+	            ? Array.isArray(argument)
+	            : argument instanceof Object
+	                ? argument instanceof Array
+	                : Object.prototype.toString.call(argument) === "[object Array]";
+	    }
+	    // 7.2.3 IsCallable(argument)
+	    // https://tc39.github.io/ecma262/#sec-iscallable
+	    function IsCallable(argument) {
+	        // NOTE: This is an approximation as we cannot check for [[Call]] internal method.
+	        return typeof argument === "function";
+	    }
+	    // 7.2.4 IsConstructor(argument)
+	    // https://tc39.github.io/ecma262/#sec-isconstructor
+	    function IsConstructor(argument) {
+	        // NOTE: This is an approximation as we cannot check for [[Construct]] internal method.
+	        return typeof argument === "function";
+	    }
+	    // 7.3 Operations on Objects
+	    // https://tc39.github.io/ecma262/#sec-operations-on-objects
+	    // 7.3.9 GetMethod(V, P)
+	    // https://tc39.github.io/ecma262/#sec-getmethod
+	    function GetMethod(V, P) {
+	        var func = V[P];
+	        if (func === undefined || func === null)
+	            return undefined;
+	        if (!IsCallable(func))
+	            throw new TypeError();
+	        return func;
+	    }
+	    // 7.4 Operations on Iterator Objects
+	    // https://tc39.github.io/ecma262/#sec-operations-on-iterator-objects
+	    function GetIterator(obj) {
+	        var method = GetMethod(obj, iteratorSymbol);
+	        if (!IsCallable(method))
+	            throw new TypeError(); // from Call
+	        var iterator = method.call(obj);
+	        if (!IsObject(iterator))
+	            throw new TypeError();
+	        return iterator;
+	    }
+	    // 7.4.4 IteratorValue(iterResult)
+	    // https://tc39.github.io/ecma262/2016/#sec-iteratorvalue
+	    function IteratorValue(iterResult) {
+	        return iterResult.value;
+	    }
+	    // 7.4.5 IteratorStep(iterator)
+	    // https://tc39.github.io/ecma262/#sec-iteratorstep
+	    function IteratorStep(iterator) {
+	        var result = iterator.next();
+	        return result.done ? false : result;
+	    }
+	    // 7.4.6 IteratorClose(iterator, completion)
+	    // https://tc39.github.io/ecma262/#sec-iteratorclose
+	    function IteratorClose(iterator) {
+	        var f = iterator["return"];
+	        if (f)
+	            f.call(iterator);
+	    }
+	    // 9.1 Ordinary Object Internal Methods and Internal Slots
+	    // https://tc39.github.io/ecma262/#sec-ordinary-object-internal-methods-and-internal-slots
+	    // 9.1.1.1 OrdinaryGetPrototypeOf(O)
+	    // https://tc39.github.io/ecma262/#sec-ordinarygetprototypeof
+	    function OrdinaryGetPrototypeOf(O) {
+	        var proto = Object.getPrototypeOf(O);
+	        if (typeof O !== "function" || O === functionPrototype)
+	            return proto;
+	        // TypeScript doesn't set __proto__ in ES5, as it's non-standard.
+	        // Try to determine the superclass constructor. Compatible implementations
+	        // must either set __proto__ on a subclass constructor to the superclass constructor,
+	        // or ensure each class has a valid `constructor` property on its prototype that
+	        // points back to the constructor.
+	        // If this is not the same as Function.[[Prototype]], then this is definately inherited.
+	        // This is the case when in ES6 or when using __proto__ in a compatible browser.
+	        if (proto !== functionPrototype)
+	            return proto;
+	        // If the super prototype is Object.prototype, null, or undefined, then we cannot determine the heritage.
+	        var prototype = O.prototype;
+	        var prototypeProto = prototype && Object.getPrototypeOf(prototype);
+	        if (prototypeProto == null || prototypeProto === Object.prototype)
+	            return proto;
+	        // If the constructor was not a function, then we cannot determine the heritage.
+	        var constructor = prototypeProto.constructor;
+	        if (typeof constructor !== "function")
+	            return proto;
+	        // If we have some kind of self-reference, then we cannot determine the heritage.
+	        if (constructor === O)
+	            return proto;
+	        // we have a pretty good guess at the heritage.
+	        return constructor;
+	    }
+	    // naive Map shim
+	    function CreateMapPolyfill() {
+	        var cacheSentinel = {};
+	        var arraySentinel = [];
+	        var MapIterator = (function () {
+	            function MapIterator(keys, values, selector) {
+	                this._index = 0;
+	                this._keys = keys;
+	                this._values = values;
+	                this._selector = selector;
+	            }
+	            MapIterator.prototype["@@iterator"] = function () { return this; };
+	            MapIterator.prototype[iteratorSymbol] = function () { return this; };
+	            MapIterator.prototype.next = function () {
+	                var index = this._index;
+	                if (index >= 0 && index < this._keys.length) {
+	                    var result = this._selector(this._keys[index], this._values[index]);
+	                    if (index + 1 >= this._keys.length) {
+	                        this._index = -1;
+	                        this._keys = arraySentinel;
+	                        this._values = arraySentinel;
+	                    }
+	                    else {
+	                        this._index++;
+	                    }
+	                    return { value: result, done: false };
+	                }
+	                return { value: undefined, done: true };
+	            };
+	            MapIterator.prototype.throw = function (error) {
+	                if (this._index >= 0) {
+	                    this._index = -1;
+	                    this._keys = arraySentinel;
+	                    this._values = arraySentinel;
+	                }
+	                throw error;
+	            };
+	            MapIterator.prototype.return = function (value) {
+	                if (this._index >= 0) {
+	                    this._index = -1;
+	                    this._keys = arraySentinel;
+	                    this._values = arraySentinel;
+	                }
+	                return { value: value, done: true };
+	            };
+	            return MapIterator;
+	        }());
+	        return (function () {
+	            function Map() {
+	                this._keys = [];
+	                this._values = [];
+	                this._cacheKey = cacheSentinel;
+	                this._cacheIndex = -2;
+	            }
+	            Object.defineProperty(Map.prototype, "size", {
+	                get: function () { return this._keys.length; },
+	                enumerable: true,
+	                configurable: true
+	            });
+	            Map.prototype.has = function (key) { return this._find(key, /*insert*/ false) >= 0; };
+	            Map.prototype.get = function (key) {
+	                var index = this._find(key, /*insert*/ false);
+	                return index >= 0 ? this._values[index] : undefined;
+	            };
+	            Map.prototype.set = function (key, value) {
+	                var index = this._find(key, /*insert*/ true);
+	                this._values[index] = value;
+	                return this;
+	            };
+	            Map.prototype.delete = function (key) {
+	                var index = this._find(key, /*insert*/ false);
+	                if (index >= 0) {
+	                    var size = this._keys.length;
+	                    for (var i = index + 1; i < size; i++) {
+	                        this._keys[i - 1] = this._keys[i];
+	                        this._values[i - 1] = this._values[i];
+	                    }
+	                    this._keys.length--;
+	                    this._values.length--;
+	                    if (key === this._cacheKey) {
+	                        this._cacheKey = cacheSentinel;
+	                        this._cacheIndex = -2;
+	                    }
+	                    return true;
+	                }
+	                return false;
+	            };
+	            Map.prototype.clear = function () {
+	                this._keys.length = 0;
+	                this._values.length = 0;
+	                this._cacheKey = cacheSentinel;
+	                this._cacheIndex = -2;
+	            };
+	            Map.prototype.keys = function () { return new MapIterator(this._keys, this._values, getKey); };
+	            Map.prototype.values = function () { return new MapIterator(this._keys, this._values, getValue); };
+	            Map.prototype.entries = function () { return new MapIterator(this._keys, this._values, getEntry); };
+	            Map.prototype["@@iterator"] = function () { return this.entries(); };
+	            Map.prototype[iteratorSymbol] = function () { return this.entries(); };
+	            Map.prototype._find = function (key, insert) {
+	                if (this._cacheKey === key)
+	                    return this._cacheIndex;
+	                var index = this._keys.indexOf(key);
+	                if (index < 0 && insert) {
+	                    index = this._keys.length;
+	                    this._keys.push(key);
+	                    this._values.push(undefined);
+	                }
+	                return this._cacheKey = key, this._cacheIndex = index;
+	            };
+	            return Map;
+	        }());
+	        function getKey(key, _) {
+	            return key;
+	        }
+	        function getValue(_, value) {
+	            return value;
+	        }
+	        function getEntry(key, value) {
+	            return [key, value];
+	        }
+	    }
+	    // naive Set shim
+	    function CreateSetPolyfill() {
+	        return (function () {
+	            function Set() {
+	                this._map = new _Map();
+	            }
+	            Object.defineProperty(Set.prototype, "size", {
+	                get: function () { return this._map.size; },
+	                enumerable: true,
+	                configurable: true
+	            });
+	            Set.prototype.has = function (value) { return this._map.has(value); };
+	            Set.prototype.add = function (value) { return this._map.set(value, value), this; };
+	            Set.prototype.delete = function (value) { return this._map.delete(value); };
+	            Set.prototype.clear = function () { this._map.clear(); };
+	            Set.prototype.keys = function () { return this._map.keys(); };
+	            Set.prototype.values = function () { return this._map.values(); };
+	            Set.prototype.entries = function () { return this._map.entries(); };
+	            Set.prototype["@@iterator"] = function () { return this.keys(); };
+	            Set.prototype[iteratorSymbol] = function () { return this.keys(); };
+	            return Set;
+	        }());
+	    }
+	    // naive WeakMap shim
+	    function CreateWeakMapPolyfill() {
+	        var UUID_SIZE = 16;
+	        var keys = createDictionary();
+	        var rootKey = CreateUniqueKey();
+	        return (function () {
+	            function WeakMap() {
+	                this._key = CreateUniqueKey();
+	            }
+	            WeakMap.prototype.has = function (target) {
+	                var table = GetOrCreateWeakMapTable(target, /*create*/ false);
+	                return table !== undefined ? HashMap.has(table, this._key) : false;
+	            };
+	            WeakMap.prototype.get = function (target) {
+	                var table = GetOrCreateWeakMapTable(target, /*create*/ false);
+	                return table !== undefined ? HashMap.get(table, this._key) : undefined;
+	            };
+	            WeakMap.prototype.set = function (target, value) {
+	                var table = GetOrCreateWeakMapTable(target, /*create*/ true);
+	                table[this._key] = value;
+	                return this;
+	            };
+	            WeakMap.prototype.delete = function (target) {
+	                var table = GetOrCreateWeakMapTable(target, /*create*/ false);
+	                return table !== undefined ? delete table[this._key] : false;
+	            };
+	            WeakMap.prototype.clear = function () {
+	                // NOTE: not a real clear, just makes the previous data unreachable
+	                this._key = CreateUniqueKey();
+	            };
+	            return WeakMap;
+	        }());
+	        function CreateUniqueKey() {
+	            var key;
+	            do
+	                key = "@@WeakMap@@" + CreateUUID();
+	            while (HashMap.has(keys, key));
+	            keys[key] = true;
+	            return key;
+	        }
+	        function GetOrCreateWeakMapTable(target, create) {
+	            if (!hasOwn.call(target, rootKey)) {
+	                if (!create)
+	                    return undefined;
+	                Object.defineProperty(target, rootKey, { value: createDictionary() });
+	            }
+	            return target[rootKey];
+	        }
+	        function FillRandomBytes(buffer, size) {
+	            for (var i = 0; i < size; ++i)
+	                buffer[i] = Math.random() * 0xff | 0;
+	            return buffer;
+	        }
+	        function GenRandomBytes(size) {
+	            if (typeof Uint8Array === "function") {
+	                if (typeof crypto !== "undefined")
+	                    return crypto.getRandomValues(new Uint8Array(size));
+	                if (typeof msCrypto !== "undefined")
+	                    return msCrypto.getRandomValues(new Uint8Array(size));
+	                return FillRandomBytes(new Uint8Array(size), size);
+	            }
+	            return FillRandomBytes(new Array(size), size);
+	        }
+	        function CreateUUID() {
+	            var data = GenRandomBytes(UUID_SIZE);
+	            // mark as random - RFC 4122 § 4.4
+	            data[6] = data[6] & 0x4f | 0x40;
+	            data[8] = data[8] & 0xbf | 0x80;
+	            var result = "";
+	            for (var offset = 0; offset < UUID_SIZE; ++offset) {
+	                var byte = data[offset];
+	                if (offset === 4 || offset === 6 || offset === 8)
+	                    result += "-";
+	                if (byte < 16)
+	                    result += "0";
+	                result += byte.toString(16).toLowerCase();
+	            }
+	            return result;
+	        }
+	    }
+	    // uses a heuristic used by v8 and chakra to force an object into dictionary mode.
+	    function MakeDictionary(obj) {
+	        obj.__ = undefined;
+	        delete obj.__;
+	        return obj;
+	    }
+	    // patch global Reflect
+	    (function (__global) {
+	        if (typeof __global.Reflect !== "undefined") {
+	            if (__global.Reflect !== Reflect) {
+	                for (var p in Reflect) {
+	                    if (hasOwn.call(Reflect, p)) {
+	                        __global.Reflect[p] = Reflect[p];
+	                    }
+	                }
+	            }
+	        }
+	        else {
+	            __global.Reflect = Reflect;
+	        }
+	    })(typeof global !== "undefined" ? global :
+	        typeof self !== "undefined" ? self :
+	            Function("return this;")());
+	})(Reflect || (Reflect = {}));
+	
+	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }())))
+
+/***/ },
+/* 8 */
+/***/ function(module, exports, __webpack_require__) {
+
 	/* WEBPACK VAR INJECTION */(function(global) {/**
 	 * @license Angular v2.0.0
 	 * (c) 2010-2016 Google, Inc. https://angular.io/
 	 * License: MIT
 	 */
 	(function (global, factory) {
-	     true ? factory(exports, __webpack_require__(2), __webpack_require__(3), __webpack_require__(21)) :
+	     true ? factory(exports, __webpack_require__(9), __webpack_require__(10), __webpack_require__(28)) :
 	    typeof define === 'function' && define.amd ? define(['exports', '@angular/compiler', '@angular/core', '@angular/platform-browser'], factory) :
 	    (factory((global.ng = global.ng || {}, global.ng.platformBrowserDynamic = global.ng.platformBrowserDynamic || {}),global.ng.compiler,global.ng.core,global.ng.platformBrowser));
 	}(this, function (exports,_angular_compiler,_angular_core,_angular_platformBrowser) { 'use strict';
@@ -269,7 +4288,7 @@
 	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }())))
 
 /***/ },
-/* 2 */
+/* 9 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* WEBPACK VAR INJECTION */(function(global) {/**
@@ -278,7 +4297,7 @@
 	 * License: MIT
 	 */
 	(function (global, factory) {
-	   true ? factory(exports, __webpack_require__(3)) :
+	   true ? factory(exports, __webpack_require__(10)) :
 	  typeof define === 'function' && define.amd ? define(['exports', '@angular/core'], factory) :
 	  (factory((global.ng = global.ng || {}, global.ng.compiler = global.ng.compiler || {}),global.ng.core));
 	}(this, function (exports,_angular_core) { 'use strict';
@@ -17963,7 +21982,7 @@
 	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }())))
 
 /***/ },
-/* 3 */
+/* 10 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* WEBPACK VAR INJECTION */(function(global) {/**
@@ -17972,7 +21991,7 @@
 	 * License: MIT
 	 */
 	(function (global, factory) {
-	     true ? factory(exports, __webpack_require__(4), __webpack_require__(5)) :
+	     true ? factory(exports, __webpack_require__(11), __webpack_require__(12)) :
 	    typeof define === 'function' && define.amd ? define(['exports', 'rxjs/Subject', 'rxjs/Observable'], factory) :
 	    (factory((global.ng = global.ng || {}, global.ng.core = global.ng.core || {}),global.Rx,global.Rx));
 	}(this, function (exports,rxjs_Subject,rxjs_Observable) { 'use strict';
@@ -27903,7 +31922,7 @@
 	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }())))
 
 /***/ },
-/* 4 */
+/* 11 */
 /***/ function(module, exports, __webpack_require__) {
 
 	"use strict";
@@ -27912,12 +31931,12 @@
 	    function __() { this.constructor = d; }
 	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
 	};
-	var Observable_1 = __webpack_require__(5);
-	var Subscriber_1 = __webpack_require__(8);
-	var Subscription_1 = __webpack_require__(10);
-	var ObjectUnsubscribedError_1 = __webpack_require__(19);
-	var SubjectSubscription_1 = __webpack_require__(20);
-	var rxSubscriber_1 = __webpack_require__(17);
+	var Observable_1 = __webpack_require__(12);
+	var Subscriber_1 = __webpack_require__(15);
+	var Subscription_1 = __webpack_require__(17);
+	var ObjectUnsubscribedError_1 = __webpack_require__(26);
+	var SubjectSubscription_1 = __webpack_require__(27);
+	var rxSubscriber_1 = __webpack_require__(24);
 	/**
 	 * @class SubjectSubscriber<T>
 	 */
@@ -28068,13 +32087,13 @@
 
 
 /***/ },
-/* 5 */
+/* 12 */
 /***/ function(module, exports, __webpack_require__) {
 
 	"use strict";
-	var root_1 = __webpack_require__(6);
-	var toSubscriber_1 = __webpack_require__(7);
-	var observable_1 = __webpack_require__(18);
+	var root_1 = __webpack_require__(13);
+	var toSubscriber_1 = __webpack_require__(14);
+	var observable_1 = __webpack_require__(25);
 	/**
 	 * A representation of any set of values over any amount of time. This the most basic building block
 	 * of RxJS.
@@ -28213,7 +32232,7 @@
 
 
 /***/ },
-/* 6 */
+/* 13 */
 /***/ function(module, exports) {
 
 	/* WEBPACK VAR INJECTION */(function(global) {"use strict";
@@ -28234,12 +32253,12 @@
 	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }())))
 
 /***/ },
-/* 7 */
+/* 14 */
 /***/ function(module, exports, __webpack_require__) {
 
 	"use strict";
-	var Subscriber_1 = __webpack_require__(8);
-	var rxSubscriber_1 = __webpack_require__(17);
+	var Subscriber_1 = __webpack_require__(15);
+	var rxSubscriber_1 = __webpack_require__(24);
 	function toSubscriber(nextOrObserver, error, complete) {
 	    if (nextOrObserver) {
 	        if (nextOrObserver instanceof Subscriber_1.Subscriber) {
@@ -28258,7 +32277,7 @@
 
 
 /***/ },
-/* 8 */
+/* 15 */
 /***/ function(module, exports, __webpack_require__) {
 
 	"use strict";
@@ -28267,10 +32286,10 @@
 	    function __() { this.constructor = d; }
 	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
 	};
-	var isFunction_1 = __webpack_require__(9);
-	var Subscription_1 = __webpack_require__(10);
-	var Observer_1 = __webpack_require__(16);
-	var rxSubscriber_1 = __webpack_require__(17);
+	var isFunction_1 = __webpack_require__(16);
+	var Subscription_1 = __webpack_require__(17);
+	var Observer_1 = __webpack_require__(23);
+	var rxSubscriber_1 = __webpack_require__(24);
 	/**
 	 * Implements the {@link Observer} interface and extends the
 	 * {@link Subscription} class. While the {@link Observer} is the public API for
@@ -28512,7 +32531,7 @@
 
 
 /***/ },
-/* 9 */
+/* 16 */
 /***/ function(module, exports) {
 
 	"use strict";
@@ -28523,16 +32542,16 @@
 
 
 /***/ },
-/* 10 */
+/* 17 */
 /***/ function(module, exports, __webpack_require__) {
 
 	"use strict";
-	var isArray_1 = __webpack_require__(11);
-	var isObject_1 = __webpack_require__(12);
-	var isFunction_1 = __webpack_require__(9);
-	var tryCatch_1 = __webpack_require__(13);
-	var errorObject_1 = __webpack_require__(14);
-	var UnsubscriptionError_1 = __webpack_require__(15);
+	var isArray_1 = __webpack_require__(18);
+	var isObject_1 = __webpack_require__(19);
+	var isFunction_1 = __webpack_require__(16);
+	var tryCatch_1 = __webpack_require__(20);
+	var errorObject_1 = __webpack_require__(21);
+	var UnsubscriptionError_1 = __webpack_require__(22);
 	/**
 	 * Represents a disposable resource, such as the execution of an Observable. A
 	 * Subscription has one important method, `unsubscribe`, that takes no argument
@@ -28681,7 +32700,7 @@
 
 
 /***/ },
-/* 11 */
+/* 18 */
 /***/ function(module, exports) {
 
 	"use strict";
@@ -28689,7 +32708,7 @@
 
 
 /***/ },
-/* 12 */
+/* 19 */
 /***/ function(module, exports) {
 
 	"use strict";
@@ -28700,11 +32719,11 @@
 
 
 /***/ },
-/* 13 */
+/* 20 */
 /***/ function(module, exports, __webpack_require__) {
 
 	"use strict";
-	var errorObject_1 = __webpack_require__(14);
+	var errorObject_1 = __webpack_require__(21);
 	var tryCatchTarget;
 	function tryCatcher() {
 	    try {
@@ -28724,7 +32743,7 @@
 
 
 /***/ },
-/* 14 */
+/* 21 */
 /***/ function(module, exports) {
 
 	"use strict";
@@ -28733,7 +32752,7 @@
 
 
 /***/ },
-/* 15 */
+/* 22 */
 /***/ function(module, exports) {
 
 	"use strict";
@@ -28763,7 +32782,7 @@
 
 
 /***/ },
-/* 16 */
+/* 23 */
 /***/ function(module, exports) {
 
 	"use strict";
@@ -28776,22 +32795,22 @@
 
 
 /***/ },
-/* 17 */
+/* 24 */
 /***/ function(module, exports, __webpack_require__) {
 
 	"use strict";
-	var root_1 = __webpack_require__(6);
+	var root_1 = __webpack_require__(13);
 	var Symbol = root_1.root.Symbol;
 	exports.$$rxSubscriber = (typeof Symbol === 'function' && typeof Symbol.for === 'function') ?
 	    Symbol.for('rxSubscriber') : '@@rxSubscriber';
 
 
 /***/ },
-/* 18 */
+/* 25 */
 /***/ function(module, exports, __webpack_require__) {
 
 	"use strict";
-	var root_1 = __webpack_require__(6);
+	var root_1 = __webpack_require__(13);
 	function getSymbolObservable(context) {
 	    var $$observable;
 	    var Symbol = context.Symbol;
@@ -28814,7 +32833,7 @@
 
 
 /***/ },
-/* 19 */
+/* 26 */
 /***/ function(module, exports) {
 
 	"use strict";
@@ -28846,7 +32865,7 @@
 
 
 /***/ },
-/* 20 */
+/* 27 */
 /***/ function(module, exports, __webpack_require__) {
 
 	"use strict";
@@ -28855,7 +32874,7 @@
 	    function __() { this.constructor = d; }
 	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
 	};
-	var Subscription_1 = __webpack_require__(10);
+	var Subscription_1 = __webpack_require__(17);
 	/**
 	 * We need this JSDoc comment for affecting ESDoc.
 	 * @ignore
@@ -28891,7 +32910,7 @@
 
 
 /***/ },
-/* 21 */
+/* 28 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* WEBPACK VAR INJECTION */(function(global) {/**
@@ -28900,7 +32919,7 @@
 	 * License: MIT
 	 */
 	(function (global, factory) {
-	     true ? factory(exports, __webpack_require__(22), __webpack_require__(3)) :
+	     true ? factory(exports, __webpack_require__(29), __webpack_require__(10)) :
 	    typeof define === 'function' && define.amd ? define(['exports', '@angular/common', '@angular/core'], factory) :
 	    (factory((global.ng = global.ng || {}, global.ng.platformBrowser = global.ng.platformBrowser || {}),global.ng.common,global.ng.core));
 	}(this, function (exports,_angular_common,_angular_core) { 'use strict';
@@ -31958,7 +35977,7 @@
 	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }())))
 
 /***/ },
-/* 22 */
+/* 29 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* WEBPACK VAR INJECTION */(function(global) {/**
@@ -31967,7 +35986,7 @@
 	 * License: MIT
 	 */
 	(function (global, factory) {
-	     true ? factory(exports, __webpack_require__(3)) :
+	     true ? factory(exports, __webpack_require__(10)) :
 	    typeof define === 'function' && define.amd ? define(['exports', '@angular/core'], factory) :
 	    (factory((global.ng = global.ng || {}, global.ng.common = global.ng.common || {}),global.ng.core));
 	}(this, function (exports,_angular_core) { 'use strict';
@@ -35334,7 +39353,7 @@
 	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }())))
 
 /***/ },
-/* 23 */
+/* 30 */
 /***/ function(module, exports, __webpack_require__) {
 
 	"use strict";
@@ -35347,10 +39366,27 @@
 	var __metadata = (this && this.__metadata) || function (k, v) {
 	    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 	};
-	var core_1 = __webpack_require__(3);
-	var platform_browser_1 = __webpack_require__(21);
-	var application_component_1 = __webpack_require__(24);
-	var header_component_1 = __webpack_require__(26);
+	var core_1 = __webpack_require__(10);
+	var platform_browser_1 = __webpack_require__(28);
+	var router_1 = __webpack_require__(37);
+	var application_component_1 = __webpack_require__(31);
+	var header_component_1 = __webpack_require__(33);
+	var profile_component_1 = __webpack_require__(36);
+	var feed_component_1 = __webpack_require__(68);
+	var applicationRoutes = [
+	    {
+	        path: 'profile',
+	        component: profile_component_1.ProfileComponent
+	    },
+	    {
+	        path: '',
+	        component: feed_component_1.FeedComponent
+	    },
+	    {
+	        path: '**',
+	        component: feed_component_1.FeedComponent
+	    }
+	];
 	var ApplicationModule = (function () {
 	    function ApplicationModule() {
 	    }
@@ -35358,10 +39394,15 @@
 	}());
 	ApplicationModule = __decorate([
 	    core_1.NgModule({
-	        imports: [platform_browser_1.BrowserModule],
+	        imports: [
+	            platform_browser_1.BrowserModule,
+	            router_1.RouterModule.forRoot(applicationRoutes)
+	        ],
 	        declarations: [
 	            application_component_1.ApplicationComponent,
-	            header_component_1.HeaderComponent
+	            header_component_1.HeaderComponent,
+	            profile_component_1.ProfileComponent,
+	            feed_component_1.FeedComponent
 	        ],
 	        bootstrap: [application_component_1.ApplicationComponent]
 	    }),
@@ -35371,7 +39412,7 @@
 
 
 /***/ },
-/* 24 */
+/* 31 */
 /***/ function(module, exports, __webpack_require__) {
 
 	"use strict";
@@ -35384,8 +39425,8 @@
 	var __metadata = (this && this.__metadata) || function (k, v) {
 	    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 	};
-	var core_1 = __webpack_require__(3);
-	var core_2 = __webpack_require__(3);
+	var core_1 = __webpack_require__(10);
+	var core_2 = __webpack_require__(10);
 	var ApplicationComponent = (function () {
 	    function ApplicationComponent() {
 	    }
@@ -35394,9 +39435,9 @@
 	ApplicationComponent = __decorate([
 	    core_1.Component({
 	        selector: 'application',
-	        template: "\n        <header-component></header-component>\n    ",
+	        template: __webpack_require__(67),
 	        encapsulation: core_2.ViewEncapsulation.None,
-	        styles: [__webpack_require__(25)]
+	        styles: [__webpack_require__(32)]
 	    }),
 	    __metadata("design:paramtypes", [])
 	], ApplicationComponent);
@@ -35404,13 +39445,13 @@
 
 
 /***/ },
-/* 25 */
+/* 32 */
 /***/ function(module, exports) {
 
-	module.exports = "@charset \"UTF-8\";\n.container, .container-fluid {\n  margin-right: auto;\n  margin-left: auto; }\n\n.container-fluid {\n  padding-right: 2rem;\n  padding-left: 2rem; }\n\n.row {\n  box-sizing: border-box;\n  display: -webkit-box;\n  display: -ms-flexbox;\n  display: flex;\n  -webkit-box-flex: 0;\n  -ms-flex: 0 1 auto;\n  flex: 0 1 auto;\n  -webkit-box-orient: horizontal;\n  -webkit-box-direction: normal;\n  -ms-flex-direction: row;\n  flex-direction: row;\n  -ms-flex-wrap: wrap;\n  flex-wrap: wrap;\n  margin-right: -.5rem;\n  margin-left: -.5rem; }\n\n.row.reverse {\n  -webkit-box-orient: horizontal;\n  -webkit-box-direction: reverse;\n  -ms-flex-direction: row-reverse;\n  flex-direction: row-reverse; }\n\n.col.reverse {\n  -webkit-box-orient: vertical;\n  -webkit-box-direction: reverse;\n  -ms-flex-direction: column-reverse;\n  flex-direction: column-reverse; }\n\n.col-xs, .col-xs-1, .col-xs-10, .col-xs-11, .col-xs-12, .col-xs-2, .col-xs-3, .col-xs-4, .col-xs-5, .col-xs-6, .col-xs-7, .col-xs-8, .col-xs-9, .col-xs-offset-0, .col-xs-offset-1, .col-xs-offset-10, .col-xs-offset-11, .col-xs-offset-12, .col-xs-offset-2, .col-xs-offset-3, .col-xs-offset-4, .col-xs-offset-5, .col-xs-offset-6, .col-xs-offset-7, .col-xs-offset-8, .col-xs-offset-9 {\n  box-sizing: border-box;\n  -webkit-box-flex: 0;\n  -ms-flex: 0 0 auto;\n  flex: 0 0 auto;\n  padding-right: .5rem;\n  padding-left: .5rem; }\n\n.col-xs {\n  -webkit-box-flex: 1;\n  -ms-flex-positive: 1;\n  flex-grow: 1;\n  -ms-flex-preferred-size: 0;\n  flex-basis: 0;\n  max-width: 100%; }\n\n.col-xs-1 {\n  -ms-flex-preferred-size: 8.33333333%;\n  flex-basis: 8.33333333%;\n  max-width: 8.33333333%; }\n\n.col-xs-2 {\n  -ms-flex-preferred-size: 16.66666667%;\n  flex-basis: 16.66666667%;\n  max-width: 16.66666667%; }\n\n.col-xs-3 {\n  -ms-flex-preferred-size: 25%;\n  flex-basis: 25%;\n  max-width: 25%; }\n\n.col-xs-4 {\n  -ms-flex-preferred-size: 33.33333333%;\n  flex-basis: 33.33333333%;\n  max-width: 33.33333333%; }\n\n.col-xs-5 {\n  -ms-flex-preferred-size: 41.66666667%;\n  flex-basis: 41.66666667%;\n  max-width: 41.66666667%; }\n\n.col-xs-6 {\n  -ms-flex-preferred-size: 50%;\n  flex-basis: 50%;\n  max-width: 50%; }\n\n.col-xs-7 {\n  -ms-flex-preferred-size: 58.33333333%;\n  flex-basis: 58.33333333%;\n  max-width: 58.33333333%; }\n\n.col-xs-8 {\n  -ms-flex-preferred-size: 66.66666667%;\n  flex-basis: 66.66666667%;\n  max-width: 66.66666667%; }\n\n.col-xs-9 {\n  -ms-flex-preferred-size: 75%;\n  flex-basis: 75%;\n  max-width: 75%; }\n\n.col-xs-10 {\n  -ms-flex-preferred-size: 83.33333333%;\n  flex-basis: 83.33333333%;\n  max-width: 83.33333333%; }\n\n.col-xs-11 {\n  -ms-flex-preferred-size: 91.66666667%;\n  flex-basis: 91.66666667%;\n  max-width: 91.66666667%; }\n\n.col-xs-12 {\n  -ms-flex-preferred-size: 100%;\n  flex-basis: 100%;\n  max-width: 100%; }\n\n.col-xs-offset-0 {\n  margin-left: 0; }\n\n.col-xs-offset-1 {\n  margin-left: 8.33333333%; }\n\n.col-xs-offset-2 {\n  margin-left: 16.66666667%; }\n\n.col-xs-offset-3 {\n  margin-left: 25%; }\n\n.col-xs-offset-4 {\n  margin-left: 33.33333333%; }\n\n.col-xs-offset-5 {\n  margin-left: 41.66666667%; }\n\n.col-xs-offset-6 {\n  margin-left: 50%; }\n\n.col-xs-offset-7 {\n  margin-left: 58.33333333%; }\n\n.col-xs-offset-8 {\n  margin-left: 66.66666667%; }\n\n.col-xs-offset-9 {\n  margin-left: 75%; }\n\n.col-xs-offset-10 {\n  margin-left: 83.33333333%; }\n\n.col-xs-offset-11 {\n  margin-left: 91.66666667%; }\n\n.start-xs {\n  -webkit-box-pack: start;\n  -ms-flex-pack: start;\n  justify-content: flex-start;\n  text-align: start; }\n\n.center-xs {\n  -webkit-box-pack: center;\n  -ms-flex-pack: center;\n  justify-content: center;\n  text-align: center; }\n\n.end-xs {\n  -webkit-box-pack: end;\n  -ms-flex-pack: end;\n  justify-content: flex-end;\n  text-align: end; }\n\n.top-xs {\n  -webkit-box-align: start;\n  -ms-flex-align: start;\n  align-items: flex-start; }\n\n.middle-xs {\n  -webkit-box-align: center;\n  -ms-flex-align: center;\n  align-items: center; }\n\n.bottom-xs {\n  -webkit-box-align: end;\n  -ms-flex-align: end;\n  align-items: flex-end; }\n\n.around-xs {\n  -ms-flex-pack: distribute;\n  justify-content: space-around; }\n\n.between-xs {\n  -webkit-box-pack: justify;\n  -ms-flex-pack: justify;\n  justify-content: space-between; }\n\n.first-xs {\n  -webkit-box-ordinal-group: 0;\n  -ms-flex-order: -1;\n  order: -1; }\n\n.last-xs {\n  -webkit-box-ordinal-group: 2;\n  -ms-flex-order: 1;\n  order: 1; }\n\n@media only screen and (min-width: 48em) {\n  .container {\n    width: 49rem; }\n  .col-sm, .col-sm-1, .col-sm-10, .col-sm-11, .col-sm-12, .col-sm-2, .col-sm-3, .col-sm-4, .col-sm-5, .col-sm-6, .col-sm-7, .col-sm-8, .col-sm-9, .col-sm-offset-0, .col-sm-offset-1, .col-sm-offset-10, .col-sm-offset-11, .col-sm-offset-12, .col-sm-offset-2, .col-sm-offset-3, .col-sm-offset-4, .col-sm-offset-5, .col-sm-offset-6, .col-sm-offset-7, .col-sm-offset-8, .col-sm-offset-9 {\n    box-sizing: border-box;\n    -webkit-box-flex: 0;\n    -ms-flex: 0 0 auto;\n    flex: 0 0 auto;\n    padding-right: .5rem;\n    padding-left: .5rem; }\n  .col-sm {\n    -webkit-box-flex: 1;\n    -ms-flex-positive: 1;\n    flex-grow: 1;\n    -ms-flex-preferred-size: 0;\n    flex-basis: 0;\n    max-width: 100%; }\n  .col-sm-1 {\n    -ms-flex-preferred-size: 8.33333333%;\n    flex-basis: 8.33333333%;\n    max-width: 8.33333333%; }\n  .col-sm-2 {\n    -ms-flex-preferred-size: 16.66666667%;\n    flex-basis: 16.66666667%;\n    max-width: 16.66666667%; }\n  .col-sm-3 {\n    -ms-flex-preferred-size: 25%;\n    flex-basis: 25%;\n    max-width: 25%; }\n  .col-sm-4 {\n    -ms-flex-preferred-size: 33.33333333%;\n    flex-basis: 33.33333333%;\n    max-width: 33.33333333%; }\n  .col-sm-5 {\n    -ms-flex-preferred-size: 41.66666667%;\n    flex-basis: 41.66666667%;\n    max-width: 41.66666667%; }\n  .col-sm-6 {\n    -ms-flex-preferred-size: 50%;\n    flex-basis: 50%;\n    max-width: 50%; }\n  .col-sm-7 {\n    -ms-flex-preferred-size: 58.33333333%;\n    flex-basis: 58.33333333%;\n    max-width: 58.33333333%; }\n  .col-sm-8 {\n    -ms-flex-preferred-size: 66.66666667%;\n    flex-basis: 66.66666667%;\n    max-width: 66.66666667%; }\n  .col-sm-9 {\n    -ms-flex-preferred-size: 75%;\n    flex-basis: 75%;\n    max-width: 75%; }\n  .col-sm-10 {\n    -ms-flex-preferred-size: 83.33333333%;\n    flex-basis: 83.33333333%;\n    max-width: 83.33333333%; }\n  .col-sm-11 {\n    -ms-flex-preferred-size: 91.66666667%;\n    flex-basis: 91.66666667%;\n    max-width: 91.66666667%; }\n  .col-sm-12 {\n    -ms-flex-preferred-size: 100%;\n    flex-basis: 100%;\n    max-width: 100%; }\n  .col-sm-offset-0 {\n    margin-left: 0; }\n  .col-sm-offset-1 {\n    margin-left: 8.33333333%; }\n  .col-sm-offset-2 {\n    margin-left: 16.66666667%; }\n  .col-sm-offset-3 {\n    margin-left: 25%; }\n  .col-sm-offset-4 {\n    margin-left: 33.33333333%; }\n  .col-sm-offset-5 {\n    margin-left: 41.66666667%; }\n  .col-sm-offset-6 {\n    margin-left: 50%; }\n  .col-sm-offset-7 {\n    margin-left: 58.33333333%; }\n  .col-sm-offset-8 {\n    margin-left: 66.66666667%; }\n  .col-sm-offset-9 {\n    margin-left: 75%; }\n  .col-sm-offset-10 {\n    margin-left: 83.33333333%; }\n  .col-sm-offset-11 {\n    margin-left: 91.66666667%; }\n  .start-sm {\n    -webkit-box-pack: start;\n    -ms-flex-pack: start;\n    justify-content: flex-start;\n    text-align: start; }\n  .center-sm {\n    -webkit-box-pack: center;\n    -ms-flex-pack: center;\n    justify-content: center;\n    text-align: center; }\n  .end-sm {\n    -webkit-box-pack: end;\n    -ms-flex-pack: end;\n    justify-content: flex-end;\n    text-align: end; }\n  .top-sm {\n    -webkit-box-align: start;\n    -ms-flex-align: start;\n    align-items: flex-start; }\n  .middle-sm {\n    -webkit-box-align: center;\n    -ms-flex-align: center;\n    align-items: center; }\n  .bottom-sm {\n    -webkit-box-align: end;\n    -ms-flex-align: end;\n    align-items: flex-end; }\n  .around-sm {\n    -ms-flex-pack: distribute;\n    justify-content: space-around; }\n  .between-sm {\n    -webkit-box-pack: justify;\n    -ms-flex-pack: justify;\n    justify-content: space-between; }\n  .first-sm {\n    -webkit-box-ordinal-group: 0;\n    -ms-flex-order: -1;\n    order: -1; }\n  .last-sm {\n    -webkit-box-ordinal-group: 2;\n    -ms-flex-order: 1;\n    order: 1; } }\n\n@media only screen and (min-width: 64em) {\n  .container {\n    width: 65rem; }\n  .col-md, .col-md-1, .col-md-10, .col-md-11, .col-md-12, .col-md-2, .col-md-3, .col-md-4, .col-md-5, .col-md-6, .col-md-7, .col-md-8, .col-md-9, .col-md-offset-0, .col-md-offset-1, .col-md-offset-10, .col-md-offset-11, .col-md-offset-12, .col-md-offset-2, .col-md-offset-3, .col-md-offset-4, .col-md-offset-5, .col-md-offset-6, .col-md-offset-7, .col-md-offset-8, .col-md-offset-9 {\n    box-sizing: border-box;\n    -webkit-box-flex: 0;\n    -ms-flex: 0 0 auto;\n    flex: 0 0 auto;\n    padding-right: .5rem;\n    padding-left: .5rem; }\n  .col-md {\n    -webkit-box-flex: 1;\n    -ms-flex-positive: 1;\n    flex-grow: 1;\n    -ms-flex-preferred-size: 0;\n    flex-basis: 0;\n    max-width: 100%; }\n  .col-md-1 {\n    -ms-flex-preferred-size: 8.33333333%;\n    flex-basis: 8.33333333%;\n    max-width: 8.33333333%; }\n  .col-md-2 {\n    -ms-flex-preferred-size: 16.66666667%;\n    flex-basis: 16.66666667%;\n    max-width: 16.66666667%; }\n  .col-md-3 {\n    -ms-flex-preferred-size: 25%;\n    flex-basis: 25%;\n    max-width: 25%; }\n  .col-md-4 {\n    -ms-flex-preferred-size: 33.33333333%;\n    flex-basis: 33.33333333%;\n    max-width: 33.33333333%; }\n  .col-md-5 {\n    -ms-flex-preferred-size: 41.66666667%;\n    flex-basis: 41.66666667%;\n    max-width: 41.66666667%; }\n  .col-md-6 {\n    -ms-flex-preferred-size: 50%;\n    flex-basis: 50%;\n    max-width: 50%; }\n  .col-md-7 {\n    -ms-flex-preferred-size: 58.33333333%;\n    flex-basis: 58.33333333%;\n    max-width: 58.33333333%; }\n  .col-md-8 {\n    -ms-flex-preferred-size: 66.66666667%;\n    flex-basis: 66.66666667%;\n    max-width: 66.66666667%; }\n  .col-md-9 {\n    -ms-flex-preferred-size: 75%;\n    flex-basis: 75%;\n    max-width: 75%; }\n  .col-md-10 {\n    -ms-flex-preferred-size: 83.33333333%;\n    flex-basis: 83.33333333%;\n    max-width: 83.33333333%; }\n  .col-md-11 {\n    -ms-flex-preferred-size: 91.66666667%;\n    flex-basis: 91.66666667%;\n    max-width: 91.66666667%; }\n  .col-md-12 {\n    -ms-flex-preferred-size: 100%;\n    flex-basis: 100%;\n    max-width: 100%; }\n  .col-md-offset-0 {\n    margin-left: 0; }\n  .col-md-offset-1 {\n    margin-left: 8.33333333%; }\n  .col-md-offset-2 {\n    margin-left: 16.66666667%; }\n  .col-md-offset-3 {\n    margin-left: 25%; }\n  .col-md-offset-4 {\n    margin-left: 33.33333333%; }\n  .col-md-offset-5 {\n    margin-left: 41.66666667%; }\n  .col-md-offset-6 {\n    margin-left: 50%; }\n  .col-md-offset-7 {\n    margin-left: 58.33333333%; }\n  .col-md-offset-8 {\n    margin-left: 66.66666667%; }\n  .col-md-offset-9 {\n    margin-left: 75%; }\n  .col-md-offset-10 {\n    margin-left: 83.33333333%; }\n  .col-md-offset-11 {\n    margin-left: 91.66666667%; }\n  .start-md {\n    -webkit-box-pack: start;\n    -ms-flex-pack: start;\n    justify-content: flex-start;\n    text-align: start; }\n  .center-md {\n    -webkit-box-pack: center;\n    -ms-flex-pack: center;\n    justify-content: center;\n    text-align: center; }\n  .end-md {\n    -webkit-box-pack: end;\n    -ms-flex-pack: end;\n    justify-content: flex-end;\n    text-align: end; }\n  .top-md {\n    -webkit-box-align: start;\n    -ms-flex-align: start;\n    align-items: flex-start; }\n  .middle-md {\n    -webkit-box-align: center;\n    -ms-flex-align: center;\n    align-items: center; }\n  .bottom-md {\n    -webkit-box-align: end;\n    -ms-flex-align: end;\n    align-items: flex-end; }\n  .around-md {\n    -ms-flex-pack: distribute;\n    justify-content: space-around; }\n  .between-md {\n    -webkit-box-pack: justify;\n    -ms-flex-pack: justify;\n    justify-content: space-between; }\n  .first-md {\n    -webkit-box-ordinal-group: 0;\n    -ms-flex-order: -1;\n    order: -1; }\n  .last-md {\n    -webkit-box-ordinal-group: 2;\n    -ms-flex-order: 1;\n    order: 1; } }\n\n@media only screen and (min-width: 75em) {\n  .container {\n    width: 76rem; }\n  .col-lg, .col-lg-1, .col-lg-10, .col-lg-11, .col-lg-12, .col-lg-2, .col-lg-3, .col-lg-4, .col-lg-5, .col-lg-6, .col-lg-7, .col-lg-8, .col-lg-9, .col-lg-offset-0, .col-lg-offset-1, .col-lg-offset-10, .col-lg-offset-11, .col-lg-offset-12, .col-lg-offset-2, .col-lg-offset-3, .col-lg-offset-4, .col-lg-offset-5, .col-lg-offset-6, .col-lg-offset-7, .col-lg-offset-8, .col-lg-offset-9 {\n    box-sizing: border-box;\n    -webkit-box-flex: 0;\n    -ms-flex: 0 0 auto;\n    flex: 0 0 auto;\n    padding-right: .5rem;\n    padding-left: .5rem; }\n  .col-lg {\n    -webkit-box-flex: 1;\n    -ms-flex-positive: 1;\n    flex-grow: 1;\n    -ms-flex-preferred-size: 0;\n    flex-basis: 0;\n    max-width: 100%; }\n  .col-lg-1 {\n    -ms-flex-preferred-size: 8.33333333%;\n    flex-basis: 8.33333333%;\n    max-width: 8.33333333%; }\n  .col-lg-2 {\n    -ms-flex-preferred-size: 16.66666667%;\n    flex-basis: 16.66666667%;\n    max-width: 16.66666667%; }\n  .col-lg-3 {\n    -ms-flex-preferred-size: 25%;\n    flex-basis: 25%;\n    max-width: 25%; }\n  .col-lg-4 {\n    -ms-flex-preferred-size: 33.33333333%;\n    flex-basis: 33.33333333%;\n    max-width: 33.33333333%; }\n  .col-lg-5 {\n    -ms-flex-preferred-size: 41.66666667%;\n    flex-basis: 41.66666667%;\n    max-width: 41.66666667%; }\n  .col-lg-6 {\n    -ms-flex-preferred-size: 50%;\n    flex-basis: 50%;\n    max-width: 50%; }\n  .col-lg-7 {\n    -ms-flex-preferred-size: 58.33333333%;\n    flex-basis: 58.33333333%;\n    max-width: 58.33333333%; }\n  .col-lg-8 {\n    -ms-flex-preferred-size: 66.66666667%;\n    flex-basis: 66.66666667%;\n    max-width: 66.66666667%; }\n  .col-lg-9 {\n    -ms-flex-preferred-size: 75%;\n    flex-basis: 75%;\n    max-width: 75%; }\n  .col-lg-10 {\n    -ms-flex-preferred-size: 83.33333333%;\n    flex-basis: 83.33333333%;\n    max-width: 83.33333333%; }\n  .col-lg-11 {\n    -ms-flex-preferred-size: 91.66666667%;\n    flex-basis: 91.66666667%;\n    max-width: 91.66666667%; }\n  .col-lg-12 {\n    -ms-flex-preferred-size: 100%;\n    flex-basis: 100%;\n    max-width: 100%; }\n  .col-lg-offset-0 {\n    margin-left: 0; }\n  .col-lg-offset-1 {\n    margin-left: 8.33333333%; }\n  .col-lg-offset-2 {\n    margin-left: 16.66666667%; }\n  .col-lg-offset-3 {\n    margin-left: 25%; }\n  .col-lg-offset-4 {\n    margin-left: 33.33333333%; }\n  .col-lg-offset-5 {\n    margin-left: 41.66666667%; }\n  .col-lg-offset-6 {\n    margin-left: 50%; }\n  .col-lg-offset-7 {\n    margin-left: 58.33333333%; }\n  .col-lg-offset-8 {\n    margin-left: 66.66666667%; }\n  .col-lg-offset-9 {\n    margin-left: 75%; }\n  .col-lg-offset-10 {\n    margin-left: 83.33333333%; }\n  .col-lg-offset-11 {\n    margin-left: 91.66666667%; }\n  .start-lg {\n    -webkit-box-pack: start;\n    -ms-flex-pack: start;\n    justify-content: flex-start;\n    text-align: start; }\n  .center-lg {\n    -webkit-box-pack: center;\n    -ms-flex-pack: center;\n    justify-content: center;\n    text-align: center; }\n  .end-lg {\n    -webkit-box-pack: end;\n    -ms-flex-pack: end;\n    justify-content: flex-end;\n    text-align: end; }\n  .top-lg {\n    -webkit-box-align: start;\n    -ms-flex-align: start;\n    align-items: flex-start; }\n  .middle-lg {\n    -webkit-box-align: center;\n    -ms-flex-align: center;\n    align-items: center; }\n  .bottom-lg {\n    -webkit-box-align: end;\n    -ms-flex-align: end;\n    align-items: flex-end; }\n  .around-lg {\n    -ms-flex-pack: distribute;\n    justify-content: space-around; }\n  .between-lg {\n    -webkit-box-pack: justify;\n    -ms-flex-pack: justify;\n    justify-content: space-between; }\n  .first-lg {\n    -webkit-box-ordinal-group: 0;\n    -ms-flex-order: -1;\n    order: -1; }\n  .last-lg {\n    -webkit-box-ordinal-group: 2;\n    -ms-flex-order: 1;\n    order: 1; } }\n\n/*!\n *  Font Awesome 4.7.0 by @davegandy - http://fontawesome.io - @fontawesome\n *  License - http://fontawesome.io/license (Font: SIL OFL 1.1, CSS: MIT License)\n */\n/* FONT PATH\n * -------------------------- */\n@font-face {\n  font-family: 'FontAwesome';\n  src: url(\"../fonts/fontawesome-webfont.eot?v=4.7.0\");\n  src: url(\"../fonts/fontawesome-webfont.eot?#iefix&v=4.7.0\") format(\"embedded-opentype\"), url(\"../fonts/fontawesome-webfont.woff2?v=4.7.0\") format(\"woff2\"), url(\"../fonts/fontawesome-webfont.woff?v=4.7.0\") format(\"woff\"), url(\"../fonts/fontawesome-webfont.ttf?v=4.7.0\") format(\"truetype\"), url(\"../fonts/fontawesome-webfont.svg?v=4.7.0#fontawesomeregular\") format(\"svg\");\n  font-weight: normal;\n  font-style: normal; }\n\n.fa {\n  display: inline-block;\n  font: normal normal normal 14px/1 FontAwesome;\n  font-size: inherit;\n  text-rendering: auto;\n  -webkit-font-smoothing: antialiased;\n  -moz-osx-font-smoothing: grayscale; }\n\n/* makes the font 33% larger relative to the icon container */\n.fa-lg {\n  font-size: 1.33333em;\n  line-height: 0.75em;\n  vertical-align: -15%; }\n\n.fa-2x {\n  font-size: 2em; }\n\n.fa-3x {\n  font-size: 3em; }\n\n.fa-4x {\n  font-size: 4em; }\n\n.fa-5x {\n  font-size: 5em; }\n\n.fa-fw {\n  width: 1.28571em;\n  text-align: center; }\n\n.fa-ul {\n  padding-left: 0;\n  margin-left: 2.14286em;\n  list-style-type: none; }\n  .fa-ul > li {\n    position: relative; }\n\n.fa-li {\n  position: absolute;\n  left: -2.14286em;\n  width: 2.14286em;\n  top: 0.14286em;\n  text-align: center; }\n  .fa-li.fa-lg {\n    left: -1.85714em; }\n\n.fa-border {\n  padding: .2em .25em .15em;\n  border: solid 0.08em #eee;\n  border-radius: .1em; }\n\n.fa-pull-left {\n  float: left; }\n\n.fa-pull-right {\n  float: right; }\n\n.fa.fa-pull-left {\n  margin-right: .3em; }\n\n.fa.fa-pull-right {\n  margin-left: .3em; }\n\n/* Deprecated as of 4.4.0 */\n.pull-right {\n  float: right; }\n\n.pull-left {\n  float: left; }\n\n.fa.pull-left {\n  margin-right: .3em; }\n\n.fa.pull-right {\n  margin-left: .3em; }\n\n.fa-spin {\n  -webkit-animation: fa-spin 2s infinite linear;\n  animation: fa-spin 2s infinite linear; }\n\n.fa-pulse {\n  -webkit-animation: fa-spin 1s infinite steps(8);\n  animation: fa-spin 1s infinite steps(8); }\n\n@-webkit-keyframes fa-spin {\n  0% {\n    -webkit-transform: rotate(0deg);\n    transform: rotate(0deg); }\n  100% {\n    -webkit-transform: rotate(359deg);\n    transform: rotate(359deg); } }\n\n@keyframes fa-spin {\n  0% {\n    -webkit-transform: rotate(0deg);\n    transform: rotate(0deg); }\n  100% {\n    -webkit-transform: rotate(359deg);\n    transform: rotate(359deg); } }\n\n.fa-rotate-90 {\n  -ms-filter: \"progid:DXImageTransform.Microsoft.BasicImage(rotation=1)\";\n  -webkit-transform: rotate(90deg);\n  -ms-transform: rotate(90deg);\n  transform: rotate(90deg); }\n\n.fa-rotate-180 {\n  -ms-filter: \"progid:DXImageTransform.Microsoft.BasicImage(rotation=2)\";\n  -webkit-transform: rotate(180deg);\n  -ms-transform: rotate(180deg);\n  transform: rotate(180deg); }\n\n.fa-rotate-270 {\n  -ms-filter: \"progid:DXImageTransform.Microsoft.BasicImage(rotation=3)\";\n  -webkit-transform: rotate(270deg);\n  -ms-transform: rotate(270deg);\n  transform: rotate(270deg); }\n\n.fa-flip-horizontal {\n  -ms-filter: \"progid:DXImageTransform.Microsoft.BasicImage(rotation=0, mirror=1)\";\n  -webkit-transform: scale(-1, 1);\n  -ms-transform: scale(-1, 1);\n  transform: scale(-1, 1); }\n\n.fa-flip-vertical {\n  -ms-filter: \"progid:DXImageTransform.Microsoft.BasicImage(rotation=2, mirror=1)\";\n  -webkit-transform: scale(1, -1);\n  -ms-transform: scale(1, -1);\n  transform: scale(1, -1); }\n\n:root .fa-rotate-90,\n:root .fa-rotate-180,\n:root .fa-rotate-270,\n:root .fa-flip-horizontal,\n:root .fa-flip-vertical {\n  filter: none; }\n\n.fa-stack {\n  position: relative;\n  display: inline-block;\n  width: 2em;\n  height: 2em;\n  line-height: 2em;\n  vertical-align: middle; }\n\n.fa-stack-1x, .fa-stack-2x {\n  position: absolute;\n  left: 0;\n  width: 100%;\n  text-align: center; }\n\n.fa-stack-1x {\n  line-height: inherit; }\n\n.fa-stack-2x {\n  font-size: 2em; }\n\n.fa-inverse {\n  color: #fff; }\n\n/* Font Awesome uses the Unicode Private Use Area (PUA) to ensure screen\n   readers do not read off random characters that represent icons */\n.fa-glass:before {\n  content: \"\"; }\n\n.fa-music:before {\n  content: \"\"; }\n\n.fa-search:before {\n  content: \"\"; }\n\n.fa-envelope-o:before {\n  content: \"\"; }\n\n.fa-heart:before {\n  content: \"\"; }\n\n.fa-star:before {\n  content: \"\"; }\n\n.fa-star-o:before {\n  content: \"\"; }\n\n.fa-user:before {\n  content: \"\"; }\n\n.fa-film:before {\n  content: \"\"; }\n\n.fa-th-large:before {\n  content: \"\"; }\n\n.fa-th:before {\n  content: \"\"; }\n\n.fa-th-list:before {\n  content: \"\"; }\n\n.fa-check:before {\n  content: \"\"; }\n\n.fa-remove:before,\n.fa-close:before,\n.fa-times:before {\n  content: \"\"; }\n\n.fa-search-plus:before {\n  content: \"\"; }\n\n.fa-search-minus:before {\n  content: \"\"; }\n\n.fa-power-off:before {\n  content: \"\"; }\n\n.fa-signal:before {\n  content: \"\"; }\n\n.fa-gear:before,\n.fa-cog:before {\n  content: \"\"; }\n\n.fa-trash-o:before {\n  content: \"\"; }\n\n.fa-home:before {\n  content: \"\"; }\n\n.fa-file-o:before {\n  content: \"\"; }\n\n.fa-clock-o:before {\n  content: \"\"; }\n\n.fa-road:before {\n  content: \"\"; }\n\n.fa-download:before {\n  content: \"\"; }\n\n.fa-arrow-circle-o-down:before {\n  content: \"\"; }\n\n.fa-arrow-circle-o-up:before {\n  content: \"\"; }\n\n.fa-inbox:before {\n  content: \"\"; }\n\n.fa-play-circle-o:before {\n  content: \"\"; }\n\n.fa-rotate-right:before,\n.fa-repeat:before {\n  content: \"\"; }\n\n.fa-refresh:before {\n  content: \"\"; }\n\n.fa-list-alt:before {\n  content: \"\"; }\n\n.fa-lock:before {\n  content: \"\"; }\n\n.fa-flag:before {\n  content: \"\"; }\n\n.fa-headphones:before {\n  content: \"\"; }\n\n.fa-volume-off:before {\n  content: \"\"; }\n\n.fa-volume-down:before {\n  content: \"\"; }\n\n.fa-volume-up:before {\n  content: \"\"; }\n\n.fa-qrcode:before {\n  content: \"\"; }\n\n.fa-barcode:before {\n  content: \"\"; }\n\n.fa-tag:before {\n  content: \"\"; }\n\n.fa-tags:before {\n  content: \"\"; }\n\n.fa-book:before {\n  content: \"\"; }\n\n.fa-bookmark:before {\n  content: \"\"; }\n\n.fa-print:before {\n  content: \"\"; }\n\n.fa-camera:before {\n  content: \"\"; }\n\n.fa-font:before {\n  content: \"\"; }\n\n.fa-bold:before {\n  content: \"\"; }\n\n.fa-italic:before {\n  content: \"\"; }\n\n.fa-text-height:before {\n  content: \"\"; }\n\n.fa-text-width:before {\n  content: \"\"; }\n\n.fa-align-left:before {\n  content: \"\"; }\n\n.fa-align-center:before {\n  content: \"\"; }\n\n.fa-align-right:before {\n  content: \"\"; }\n\n.fa-align-justify:before {\n  content: \"\"; }\n\n.fa-list:before {\n  content: \"\"; }\n\n.fa-dedent:before,\n.fa-outdent:before {\n  content: \"\"; }\n\n.fa-indent:before {\n  content: \"\"; }\n\n.fa-video-camera:before {\n  content: \"\"; }\n\n.fa-photo:before,\n.fa-image:before,\n.fa-picture-o:before {\n  content: \"\"; }\n\n.fa-pencil:before {\n  content: \"\"; }\n\n.fa-map-marker:before {\n  content: \"\"; }\n\n.fa-adjust:before {\n  content: \"\"; }\n\n.fa-tint:before {\n  content: \"\"; }\n\n.fa-edit:before,\n.fa-pencil-square-o:before {\n  content: \"\"; }\n\n.fa-share-square-o:before {\n  content: \"\"; }\n\n.fa-check-square-o:before {\n  content: \"\"; }\n\n.fa-arrows:before {\n  content: \"\"; }\n\n.fa-step-backward:before {\n  content: \"\"; }\n\n.fa-fast-backward:before {\n  content: \"\"; }\n\n.fa-backward:before {\n  content: \"\"; }\n\n.fa-play:before {\n  content: \"\"; }\n\n.fa-pause:before {\n  content: \"\"; }\n\n.fa-stop:before {\n  content: \"\"; }\n\n.fa-forward:before {\n  content: \"\"; }\n\n.fa-fast-forward:before {\n  content: \"\"; }\n\n.fa-step-forward:before {\n  content: \"\"; }\n\n.fa-eject:before {\n  content: \"\"; }\n\n.fa-chevron-left:before {\n  content: \"\"; }\n\n.fa-chevron-right:before {\n  content: \"\"; }\n\n.fa-plus-circle:before {\n  content: \"\"; }\n\n.fa-minus-circle:before {\n  content: \"\"; }\n\n.fa-times-circle:before {\n  content: \"\"; }\n\n.fa-check-circle:before {\n  content: \"\"; }\n\n.fa-question-circle:before {\n  content: \"\"; }\n\n.fa-info-circle:before {\n  content: \"\"; }\n\n.fa-crosshairs:before {\n  content: \"\"; }\n\n.fa-times-circle-o:before {\n  content: \"\"; }\n\n.fa-check-circle-o:before {\n  content: \"\"; }\n\n.fa-ban:before {\n  content: \"\"; }\n\n.fa-arrow-left:before {\n  content: \"\"; }\n\n.fa-arrow-right:before {\n  content: \"\"; }\n\n.fa-arrow-up:before {\n  content: \"\"; }\n\n.fa-arrow-down:before {\n  content: \"\"; }\n\n.fa-mail-forward:before,\n.fa-share:before {\n  content: \"\"; }\n\n.fa-expand:before {\n  content: \"\"; }\n\n.fa-compress:before {\n  content: \"\"; }\n\n.fa-plus:before {\n  content: \"\"; }\n\n.fa-minus:before {\n  content: \"\"; }\n\n.fa-asterisk:before {\n  content: \"\"; }\n\n.fa-exclamation-circle:before {\n  content: \"\"; }\n\n.fa-gift:before {\n  content: \"\"; }\n\n.fa-leaf:before {\n  content: \"\"; }\n\n.fa-fire:before {\n  content: \"\"; }\n\n.fa-eye:before {\n  content: \"\"; }\n\n.fa-eye-slash:before {\n  content: \"\"; }\n\n.fa-warning:before,\n.fa-exclamation-triangle:before {\n  content: \"\"; }\n\n.fa-plane:before {\n  content: \"\"; }\n\n.fa-calendar:before {\n  content: \"\"; }\n\n.fa-random:before {\n  content: \"\"; }\n\n.fa-comment:before {\n  content: \"\"; }\n\n.fa-magnet:before {\n  content: \"\"; }\n\n.fa-chevron-up:before {\n  content: \"\"; }\n\n.fa-chevron-down:before {\n  content: \"\"; }\n\n.fa-retweet:before {\n  content: \"\"; }\n\n.fa-shopping-cart:before {\n  content: \"\"; }\n\n.fa-folder:before {\n  content: \"\"; }\n\n.fa-folder-open:before {\n  content: \"\"; }\n\n.fa-arrows-v:before {\n  content: \"\"; }\n\n.fa-arrows-h:before {\n  content: \"\"; }\n\n.fa-bar-chart-o:before,\n.fa-bar-chart:before {\n  content: \"\"; }\n\n.fa-twitter-square:before {\n  content: \"\"; }\n\n.fa-facebook-square:before {\n  content: \"\"; }\n\n.fa-camera-retro:before {\n  content: \"\"; }\n\n.fa-key:before {\n  content: \"\"; }\n\n.fa-gears:before,\n.fa-cogs:before {\n  content: \"\"; }\n\n.fa-comments:before {\n  content: \"\"; }\n\n.fa-thumbs-o-up:before {\n  content: \"\"; }\n\n.fa-thumbs-o-down:before {\n  content: \"\"; }\n\n.fa-star-half:before {\n  content: \"\"; }\n\n.fa-heart-o:before {\n  content: \"\"; }\n\n.fa-sign-out:before {\n  content: \"\"; }\n\n.fa-linkedin-square:before {\n  content: \"\"; }\n\n.fa-thumb-tack:before {\n  content: \"\"; }\n\n.fa-external-link:before {\n  content: \"\"; }\n\n.fa-sign-in:before {\n  content: \"\"; }\n\n.fa-trophy:before {\n  content: \"\"; }\n\n.fa-github-square:before {\n  content: \"\"; }\n\n.fa-upload:before {\n  content: \"\"; }\n\n.fa-lemon-o:before {\n  content: \"\"; }\n\n.fa-phone:before {\n  content: \"\"; }\n\n.fa-square-o:before {\n  content: \"\"; }\n\n.fa-bookmark-o:before {\n  content: \"\"; }\n\n.fa-phone-square:before {\n  content: \"\"; }\n\n.fa-twitter:before {\n  content: \"\"; }\n\n.fa-facebook-f:before,\n.fa-facebook:before {\n  content: \"\"; }\n\n.fa-github:before {\n  content: \"\"; }\n\n.fa-unlock:before {\n  content: \"\"; }\n\n.fa-credit-card:before {\n  content: \"\"; }\n\n.fa-feed:before,\n.fa-rss:before {\n  content: \"\"; }\n\n.fa-hdd-o:before {\n  content: \"\"; }\n\n.fa-bullhorn:before {\n  content: \"\"; }\n\n.fa-bell:before {\n  content: \"\"; }\n\n.fa-certificate:before {\n  content: \"\"; }\n\n.fa-hand-o-right:before {\n  content: \"\"; }\n\n.fa-hand-o-left:before {\n  content: \"\"; }\n\n.fa-hand-o-up:before {\n  content: \"\"; }\n\n.fa-hand-o-down:before {\n  content: \"\"; }\n\n.fa-arrow-circle-left:before {\n  content: \"\"; }\n\n.fa-arrow-circle-right:before {\n  content: \"\"; }\n\n.fa-arrow-circle-up:before {\n  content: \"\"; }\n\n.fa-arrow-circle-down:before {\n  content: \"\"; }\n\n.fa-globe:before {\n  content: \"\"; }\n\n.fa-wrench:before {\n  content: \"\"; }\n\n.fa-tasks:before {\n  content: \"\"; }\n\n.fa-filter:before {\n  content: \"\"; }\n\n.fa-briefcase:before {\n  content: \"\"; }\n\n.fa-arrows-alt:before {\n  content: \"\"; }\n\n.fa-group:before,\n.fa-users:before {\n  content: \"\"; }\n\n.fa-chain:before,\n.fa-link:before {\n  content: \"\"; }\n\n.fa-cloud:before {\n  content: \"\"; }\n\n.fa-flask:before {\n  content: \"\"; }\n\n.fa-cut:before,\n.fa-scissors:before {\n  content: \"\"; }\n\n.fa-copy:before,\n.fa-files-o:before {\n  content: \"\"; }\n\n.fa-paperclip:before {\n  content: \"\"; }\n\n.fa-save:before,\n.fa-floppy-o:before {\n  content: \"\"; }\n\n.fa-square:before {\n  content: \"\"; }\n\n.fa-navicon:before,\n.fa-reorder:before,\n.fa-bars:before {\n  content: \"\"; }\n\n.fa-list-ul:before {\n  content: \"\"; }\n\n.fa-list-ol:before {\n  content: \"\"; }\n\n.fa-strikethrough:before {\n  content: \"\"; }\n\n.fa-underline:before {\n  content: \"\"; }\n\n.fa-table:before {\n  content: \"\"; }\n\n.fa-magic:before {\n  content: \"\"; }\n\n.fa-truck:before {\n  content: \"\"; }\n\n.fa-pinterest:before {\n  content: \"\"; }\n\n.fa-pinterest-square:before {\n  content: \"\"; }\n\n.fa-google-plus-square:before {\n  content: \"\"; }\n\n.fa-google-plus:before {\n  content: \"\"; }\n\n.fa-money:before {\n  content: \"\"; }\n\n.fa-caret-down:before {\n  content: \"\"; }\n\n.fa-caret-up:before {\n  content: \"\"; }\n\n.fa-caret-left:before {\n  content: \"\"; }\n\n.fa-caret-right:before {\n  content: \"\"; }\n\n.fa-columns:before {\n  content: \"\"; }\n\n.fa-unsorted:before,\n.fa-sort:before {\n  content: \"\"; }\n\n.fa-sort-down:before,\n.fa-sort-desc:before {\n  content: \"\"; }\n\n.fa-sort-up:before,\n.fa-sort-asc:before {\n  content: \"\"; }\n\n.fa-envelope:before {\n  content: \"\"; }\n\n.fa-linkedin:before {\n  content: \"\"; }\n\n.fa-rotate-left:before,\n.fa-undo:before {\n  content: \"\"; }\n\n.fa-legal:before,\n.fa-gavel:before {\n  content: \"\"; }\n\n.fa-dashboard:before,\n.fa-tachometer:before {\n  content: \"\"; }\n\n.fa-comment-o:before {\n  content: \"\"; }\n\n.fa-comments-o:before {\n  content: \"\"; }\n\n.fa-flash:before,\n.fa-bolt:before {\n  content: \"\"; }\n\n.fa-sitemap:before {\n  content: \"\"; }\n\n.fa-umbrella:before {\n  content: \"\"; }\n\n.fa-paste:before,\n.fa-clipboard:before {\n  content: \"\"; }\n\n.fa-lightbulb-o:before {\n  content: \"\"; }\n\n.fa-exchange:before {\n  content: \"\"; }\n\n.fa-cloud-download:before {\n  content: \"\"; }\n\n.fa-cloud-upload:before {\n  content: \"\"; }\n\n.fa-user-md:before {\n  content: \"\"; }\n\n.fa-stethoscope:before {\n  content: \"\"; }\n\n.fa-suitcase:before {\n  content: \"\"; }\n\n.fa-bell-o:before {\n  content: \"\"; }\n\n.fa-coffee:before {\n  content: \"\"; }\n\n.fa-cutlery:before {\n  content: \"\"; }\n\n.fa-file-text-o:before {\n  content: \"\"; }\n\n.fa-building-o:before {\n  content: \"\"; }\n\n.fa-hospital-o:before {\n  content: \"\"; }\n\n.fa-ambulance:before {\n  content: \"\"; }\n\n.fa-medkit:before {\n  content: \"\"; }\n\n.fa-fighter-jet:before {\n  content: \"\"; }\n\n.fa-beer:before {\n  content: \"\"; }\n\n.fa-h-square:before {\n  content: \"\"; }\n\n.fa-plus-square:before {\n  content: \"\"; }\n\n.fa-angle-double-left:before {\n  content: \"\"; }\n\n.fa-angle-double-right:before {\n  content: \"\"; }\n\n.fa-angle-double-up:before {\n  content: \"\"; }\n\n.fa-angle-double-down:before {\n  content: \"\"; }\n\n.fa-angle-left:before {\n  content: \"\"; }\n\n.fa-angle-right:before {\n  content: \"\"; }\n\n.fa-angle-up:before {\n  content: \"\"; }\n\n.fa-angle-down:before {\n  content: \"\"; }\n\n.fa-desktop:before {\n  content: \"\"; }\n\n.fa-laptop:before {\n  content: \"\"; }\n\n.fa-tablet:before {\n  content: \"\"; }\n\n.fa-mobile-phone:before,\n.fa-mobile:before {\n  content: \"\"; }\n\n.fa-circle-o:before {\n  content: \"\"; }\n\n.fa-quote-left:before {\n  content: \"\"; }\n\n.fa-quote-right:before {\n  content: \"\"; }\n\n.fa-spinner:before {\n  content: \"\"; }\n\n.fa-circle:before {\n  content: \"\"; }\n\n.fa-mail-reply:before,\n.fa-reply:before {\n  content: \"\"; }\n\n.fa-github-alt:before {\n  content: \"\"; }\n\n.fa-folder-o:before {\n  content: \"\"; }\n\n.fa-folder-open-o:before {\n  content: \"\"; }\n\n.fa-smile-o:before {\n  content: \"\"; }\n\n.fa-frown-o:before {\n  content: \"\"; }\n\n.fa-meh-o:before {\n  content: \"\"; }\n\n.fa-gamepad:before {\n  content: \"\"; }\n\n.fa-keyboard-o:before {\n  content: \"\"; }\n\n.fa-flag-o:before {\n  content: \"\"; }\n\n.fa-flag-checkered:before {\n  content: \"\"; }\n\n.fa-terminal:before {\n  content: \"\"; }\n\n.fa-code:before {\n  content: \"\"; }\n\n.fa-mail-reply-all:before,\n.fa-reply-all:before {\n  content: \"\"; }\n\n.fa-star-half-empty:before,\n.fa-star-half-full:before,\n.fa-star-half-o:before {\n  content: \"\"; }\n\n.fa-location-arrow:before {\n  content: \"\"; }\n\n.fa-crop:before {\n  content: \"\"; }\n\n.fa-code-fork:before {\n  content: \"\"; }\n\n.fa-unlink:before,\n.fa-chain-broken:before {\n  content: \"\"; }\n\n.fa-question:before {\n  content: \"\"; }\n\n.fa-info:before {\n  content: \"\"; }\n\n.fa-exclamation:before {\n  content: \"\"; }\n\n.fa-superscript:before {\n  content: \"\"; }\n\n.fa-subscript:before {\n  content: \"\"; }\n\n.fa-eraser:before {\n  content: \"\"; }\n\n.fa-puzzle-piece:before {\n  content: \"\"; }\n\n.fa-microphone:before {\n  content: \"\"; }\n\n.fa-microphone-slash:before {\n  content: \"\"; }\n\n.fa-shield:before {\n  content: \"\"; }\n\n.fa-calendar-o:before {\n  content: \"\"; }\n\n.fa-fire-extinguisher:before {\n  content: \"\"; }\n\n.fa-rocket:before {\n  content: \"\"; }\n\n.fa-maxcdn:before {\n  content: \"\"; }\n\n.fa-chevron-circle-left:before {\n  content: \"\"; }\n\n.fa-chevron-circle-right:before {\n  content: \"\"; }\n\n.fa-chevron-circle-up:before {\n  content: \"\"; }\n\n.fa-chevron-circle-down:before {\n  content: \"\"; }\n\n.fa-html5:before {\n  content: \"\"; }\n\n.fa-css3:before {\n  content: \"\"; }\n\n.fa-anchor:before {\n  content: \"\"; }\n\n.fa-unlock-alt:before {\n  content: \"\"; }\n\n.fa-bullseye:before {\n  content: \"\"; }\n\n.fa-ellipsis-h:before {\n  content: \"\"; }\n\n.fa-ellipsis-v:before {\n  content: \"\"; }\n\n.fa-rss-square:before {\n  content: \"\"; }\n\n.fa-play-circle:before {\n  content: \"\"; }\n\n.fa-ticket:before {\n  content: \"\"; }\n\n.fa-minus-square:before {\n  content: \"\"; }\n\n.fa-minus-square-o:before {\n  content: \"\"; }\n\n.fa-level-up:before {\n  content: \"\"; }\n\n.fa-level-down:before {\n  content: \"\"; }\n\n.fa-check-square:before {\n  content: \"\"; }\n\n.fa-pencil-square:before {\n  content: \"\"; }\n\n.fa-external-link-square:before {\n  content: \"\"; }\n\n.fa-share-square:before {\n  content: \"\"; }\n\n.fa-compass:before {\n  content: \"\"; }\n\n.fa-toggle-down:before,\n.fa-caret-square-o-down:before {\n  content: \"\"; }\n\n.fa-toggle-up:before,\n.fa-caret-square-o-up:before {\n  content: \"\"; }\n\n.fa-toggle-right:before,\n.fa-caret-square-o-right:before {\n  content: \"\"; }\n\n.fa-euro:before,\n.fa-eur:before {\n  content: \"\"; }\n\n.fa-gbp:before {\n  content: \"\"; }\n\n.fa-dollar:before,\n.fa-usd:before {\n  content: \"\"; }\n\n.fa-rupee:before,\n.fa-inr:before {\n  content: \"\"; }\n\n.fa-cny:before,\n.fa-rmb:before,\n.fa-yen:before,\n.fa-jpy:before {\n  content: \"\"; }\n\n.fa-ruble:before,\n.fa-rouble:before,\n.fa-rub:before {\n  content: \"\"; }\n\n.fa-won:before,\n.fa-krw:before {\n  content: \"\"; }\n\n.fa-bitcoin:before,\n.fa-btc:before {\n  content: \"\"; }\n\n.fa-file:before {\n  content: \"\"; }\n\n.fa-file-text:before {\n  content: \"\"; }\n\n.fa-sort-alpha-asc:before {\n  content: \"\"; }\n\n.fa-sort-alpha-desc:before {\n  content: \"\"; }\n\n.fa-sort-amount-asc:before {\n  content: \"\"; }\n\n.fa-sort-amount-desc:before {\n  content: \"\"; }\n\n.fa-sort-numeric-asc:before {\n  content: \"\"; }\n\n.fa-sort-numeric-desc:before {\n  content: \"\"; }\n\n.fa-thumbs-up:before {\n  content: \"\"; }\n\n.fa-thumbs-down:before {\n  content: \"\"; }\n\n.fa-youtube-square:before {\n  content: \"\"; }\n\n.fa-youtube:before {\n  content: \"\"; }\n\n.fa-xing:before {\n  content: \"\"; }\n\n.fa-xing-square:before {\n  content: \"\"; }\n\n.fa-youtube-play:before {\n  content: \"\"; }\n\n.fa-dropbox:before {\n  content: \"\"; }\n\n.fa-stack-overflow:before {\n  content: \"\"; }\n\n.fa-instagram:before {\n  content: \"\"; }\n\n.fa-flickr:before {\n  content: \"\"; }\n\n.fa-adn:before {\n  content: \"\"; }\n\n.fa-bitbucket:before {\n  content: \"\"; }\n\n.fa-bitbucket-square:before {\n  content: \"\"; }\n\n.fa-tumblr:before {\n  content: \"\"; }\n\n.fa-tumblr-square:before {\n  content: \"\"; }\n\n.fa-long-arrow-down:before {\n  content: \"\"; }\n\n.fa-long-arrow-up:before {\n  content: \"\"; }\n\n.fa-long-arrow-left:before {\n  content: \"\"; }\n\n.fa-long-arrow-right:before {\n  content: \"\"; }\n\n.fa-apple:before {\n  content: \"\"; }\n\n.fa-windows:before {\n  content: \"\"; }\n\n.fa-android:before {\n  content: \"\"; }\n\n.fa-linux:before {\n  content: \"\"; }\n\n.fa-dribbble:before {\n  content: \"\"; }\n\n.fa-skype:before {\n  content: \"\"; }\n\n.fa-foursquare:before {\n  content: \"\"; }\n\n.fa-trello:before {\n  content: \"\"; }\n\n.fa-female:before {\n  content: \"\"; }\n\n.fa-male:before {\n  content: \"\"; }\n\n.fa-gittip:before,\n.fa-gratipay:before {\n  content: \"\"; }\n\n.fa-sun-o:before {\n  content: \"\"; }\n\n.fa-moon-o:before {\n  content: \"\"; }\n\n.fa-archive:before {\n  content: \"\"; }\n\n.fa-bug:before {\n  content: \"\"; }\n\n.fa-vk:before {\n  content: \"\"; }\n\n.fa-weibo:before {\n  content: \"\"; }\n\n.fa-renren:before {\n  content: \"\"; }\n\n.fa-pagelines:before {\n  content: \"\"; }\n\n.fa-stack-exchange:before {\n  content: \"\"; }\n\n.fa-arrow-circle-o-right:before {\n  content: \"\"; }\n\n.fa-arrow-circle-o-left:before {\n  content: \"\"; }\n\n.fa-toggle-left:before,\n.fa-caret-square-o-left:before {\n  content: \"\"; }\n\n.fa-dot-circle-o:before {\n  content: \"\"; }\n\n.fa-wheelchair:before {\n  content: \"\"; }\n\n.fa-vimeo-square:before {\n  content: \"\"; }\n\n.fa-turkish-lira:before,\n.fa-try:before {\n  content: \"\"; }\n\n.fa-plus-square-o:before {\n  content: \"\"; }\n\n.fa-space-shuttle:before {\n  content: \"\"; }\n\n.fa-slack:before {\n  content: \"\"; }\n\n.fa-envelope-square:before {\n  content: \"\"; }\n\n.fa-wordpress:before {\n  content: \"\"; }\n\n.fa-openid:before {\n  content: \"\"; }\n\n.fa-institution:before,\n.fa-bank:before,\n.fa-university:before {\n  content: \"\"; }\n\n.fa-mortar-board:before,\n.fa-graduation-cap:before {\n  content: \"\"; }\n\n.fa-yahoo:before {\n  content: \"\"; }\n\n.fa-google:before {\n  content: \"\"; }\n\n.fa-reddit:before {\n  content: \"\"; }\n\n.fa-reddit-square:before {\n  content: \"\"; }\n\n.fa-stumbleupon-circle:before {\n  content: \"\"; }\n\n.fa-stumbleupon:before {\n  content: \"\"; }\n\n.fa-delicious:before {\n  content: \"\"; }\n\n.fa-digg:before {\n  content: \"\"; }\n\n.fa-pied-piper-pp:before {\n  content: \"\"; }\n\n.fa-pied-piper-alt:before {\n  content: \"\"; }\n\n.fa-drupal:before {\n  content: \"\"; }\n\n.fa-joomla:before {\n  content: \"\"; }\n\n.fa-language:before {\n  content: \"\"; }\n\n.fa-fax:before {\n  content: \"\"; }\n\n.fa-building:before {\n  content: \"\"; }\n\n.fa-child:before {\n  content: \"\"; }\n\n.fa-paw:before {\n  content: \"\"; }\n\n.fa-spoon:before {\n  content: \"\"; }\n\n.fa-cube:before {\n  content: \"\"; }\n\n.fa-cubes:before {\n  content: \"\"; }\n\n.fa-behance:before {\n  content: \"\"; }\n\n.fa-behance-square:before {\n  content: \"\"; }\n\n.fa-steam:before {\n  content: \"\"; }\n\n.fa-steam-square:before {\n  content: \"\"; }\n\n.fa-recycle:before {\n  content: \"\"; }\n\n.fa-automobile:before,\n.fa-car:before {\n  content: \"\"; }\n\n.fa-cab:before,\n.fa-taxi:before {\n  content: \"\"; }\n\n.fa-tree:before {\n  content: \"\"; }\n\n.fa-spotify:before {\n  content: \"\"; }\n\n.fa-deviantart:before {\n  content: \"\"; }\n\n.fa-soundcloud:before {\n  content: \"\"; }\n\n.fa-database:before {\n  content: \"\"; }\n\n.fa-file-pdf-o:before {\n  content: \"\"; }\n\n.fa-file-word-o:before {\n  content: \"\"; }\n\n.fa-file-excel-o:before {\n  content: \"\"; }\n\n.fa-file-powerpoint-o:before {\n  content: \"\"; }\n\n.fa-file-photo-o:before,\n.fa-file-picture-o:before,\n.fa-file-image-o:before {\n  content: \"\"; }\n\n.fa-file-zip-o:before,\n.fa-file-archive-o:before {\n  content: \"\"; }\n\n.fa-file-sound-o:before,\n.fa-file-audio-o:before {\n  content: \"\"; }\n\n.fa-file-movie-o:before,\n.fa-file-video-o:before {\n  content: \"\"; }\n\n.fa-file-code-o:before {\n  content: \"\"; }\n\n.fa-vine:before {\n  content: \"\"; }\n\n.fa-codepen:before {\n  content: \"\"; }\n\n.fa-jsfiddle:before {\n  content: \"\"; }\n\n.fa-life-bouy:before,\n.fa-life-buoy:before,\n.fa-life-saver:before,\n.fa-support:before,\n.fa-life-ring:before {\n  content: \"\"; }\n\n.fa-circle-o-notch:before {\n  content: \"\"; }\n\n.fa-ra:before,\n.fa-resistance:before,\n.fa-rebel:before {\n  content: \"\"; }\n\n.fa-ge:before,\n.fa-empire:before {\n  content: \"\"; }\n\n.fa-git-square:before {\n  content: \"\"; }\n\n.fa-git:before {\n  content: \"\"; }\n\n.fa-y-combinator-square:before,\n.fa-yc-square:before,\n.fa-hacker-news:before {\n  content: \"\"; }\n\n.fa-tencent-weibo:before {\n  content: \"\"; }\n\n.fa-qq:before {\n  content: \"\"; }\n\n.fa-wechat:before,\n.fa-weixin:before {\n  content: \"\"; }\n\n.fa-send:before,\n.fa-paper-plane:before {\n  content: \"\"; }\n\n.fa-send-o:before,\n.fa-paper-plane-o:before {\n  content: \"\"; }\n\n.fa-history:before {\n  content: \"\"; }\n\n.fa-circle-thin:before {\n  content: \"\"; }\n\n.fa-header:before {\n  content: \"\"; }\n\n.fa-paragraph:before {\n  content: \"\"; }\n\n.fa-sliders:before {\n  content: \"\"; }\n\n.fa-share-alt:before {\n  content: \"\"; }\n\n.fa-share-alt-square:before {\n  content: \"\"; }\n\n.fa-bomb:before {\n  content: \"\"; }\n\n.fa-soccer-ball-o:before,\n.fa-futbol-o:before {\n  content: \"\"; }\n\n.fa-tty:before {\n  content: \"\"; }\n\n.fa-binoculars:before {\n  content: \"\"; }\n\n.fa-plug:before {\n  content: \"\"; }\n\n.fa-slideshare:before {\n  content: \"\"; }\n\n.fa-twitch:before {\n  content: \"\"; }\n\n.fa-yelp:before {\n  content: \"\"; }\n\n.fa-newspaper-o:before {\n  content: \"\"; }\n\n.fa-wifi:before {\n  content: \"\"; }\n\n.fa-calculator:before {\n  content: \"\"; }\n\n.fa-paypal:before {\n  content: \"\"; }\n\n.fa-google-wallet:before {\n  content: \"\"; }\n\n.fa-cc-visa:before {\n  content: \"\"; }\n\n.fa-cc-mastercard:before {\n  content: \"\"; }\n\n.fa-cc-discover:before {\n  content: \"\"; }\n\n.fa-cc-amex:before {\n  content: \"\"; }\n\n.fa-cc-paypal:before {\n  content: \"\"; }\n\n.fa-cc-stripe:before {\n  content: \"\"; }\n\n.fa-bell-slash:before {\n  content: \"\"; }\n\n.fa-bell-slash-o:before {\n  content: \"\"; }\n\n.fa-trash:before {\n  content: \"\"; }\n\n.fa-copyright:before {\n  content: \"\"; }\n\n.fa-at:before {\n  content: \"\"; }\n\n.fa-eyedropper:before {\n  content: \"\"; }\n\n.fa-paint-brush:before {\n  content: \"\"; }\n\n.fa-birthday-cake:before {\n  content: \"\"; }\n\n.fa-area-chart:before {\n  content: \"\"; }\n\n.fa-pie-chart:before {\n  content: \"\"; }\n\n.fa-line-chart:before {\n  content: \"\"; }\n\n.fa-lastfm:before {\n  content: \"\"; }\n\n.fa-lastfm-square:before {\n  content: \"\"; }\n\n.fa-toggle-off:before {\n  content: \"\"; }\n\n.fa-toggle-on:before {\n  content: \"\"; }\n\n.fa-bicycle:before {\n  content: \"\"; }\n\n.fa-bus:before {\n  content: \"\"; }\n\n.fa-ioxhost:before {\n  content: \"\"; }\n\n.fa-angellist:before {\n  content: \"\"; }\n\n.fa-cc:before {\n  content: \"\"; }\n\n.fa-shekel:before,\n.fa-sheqel:before,\n.fa-ils:before {\n  content: \"\"; }\n\n.fa-meanpath:before {\n  content: \"\"; }\n\n.fa-buysellads:before {\n  content: \"\"; }\n\n.fa-connectdevelop:before {\n  content: \"\"; }\n\n.fa-dashcube:before {\n  content: \"\"; }\n\n.fa-forumbee:before {\n  content: \"\"; }\n\n.fa-leanpub:before {\n  content: \"\"; }\n\n.fa-sellsy:before {\n  content: \"\"; }\n\n.fa-shirtsinbulk:before {\n  content: \"\"; }\n\n.fa-simplybuilt:before {\n  content: \"\"; }\n\n.fa-skyatlas:before {\n  content: \"\"; }\n\n.fa-cart-plus:before {\n  content: \"\"; }\n\n.fa-cart-arrow-down:before {\n  content: \"\"; }\n\n.fa-diamond:before {\n  content: \"\"; }\n\n.fa-ship:before {\n  content: \"\"; }\n\n.fa-user-secret:before {\n  content: \"\"; }\n\n.fa-motorcycle:before {\n  content: \"\"; }\n\n.fa-street-view:before {\n  content: \"\"; }\n\n.fa-heartbeat:before {\n  content: \"\"; }\n\n.fa-venus:before {\n  content: \"\"; }\n\n.fa-mars:before {\n  content: \"\"; }\n\n.fa-mercury:before {\n  content: \"\"; }\n\n.fa-intersex:before,\n.fa-transgender:before {\n  content: \"\"; }\n\n.fa-transgender-alt:before {\n  content: \"\"; }\n\n.fa-venus-double:before {\n  content: \"\"; }\n\n.fa-mars-double:before {\n  content: \"\"; }\n\n.fa-venus-mars:before {\n  content: \"\"; }\n\n.fa-mars-stroke:before {\n  content: \"\"; }\n\n.fa-mars-stroke-v:before {\n  content: \"\"; }\n\n.fa-mars-stroke-h:before {\n  content: \"\"; }\n\n.fa-neuter:before {\n  content: \"\"; }\n\n.fa-genderless:before {\n  content: \"\"; }\n\n.fa-facebook-official:before {\n  content: \"\"; }\n\n.fa-pinterest-p:before {\n  content: \"\"; }\n\n.fa-whatsapp:before {\n  content: \"\"; }\n\n.fa-server:before {\n  content: \"\"; }\n\n.fa-user-plus:before {\n  content: \"\"; }\n\n.fa-user-times:before {\n  content: \"\"; }\n\n.fa-hotel:before,\n.fa-bed:before {\n  content: \"\"; }\n\n.fa-viacoin:before {\n  content: \"\"; }\n\n.fa-train:before {\n  content: \"\"; }\n\n.fa-subway:before {\n  content: \"\"; }\n\n.fa-medium:before {\n  content: \"\"; }\n\n.fa-yc:before,\n.fa-y-combinator:before {\n  content: \"\"; }\n\n.fa-optin-monster:before {\n  content: \"\"; }\n\n.fa-opencart:before {\n  content: \"\"; }\n\n.fa-expeditedssl:before {\n  content: \"\"; }\n\n.fa-battery-4:before,\n.fa-battery:before,\n.fa-battery-full:before {\n  content: \"\"; }\n\n.fa-battery-3:before,\n.fa-battery-three-quarters:before {\n  content: \"\"; }\n\n.fa-battery-2:before,\n.fa-battery-half:before {\n  content: \"\"; }\n\n.fa-battery-1:before,\n.fa-battery-quarter:before {\n  content: \"\"; }\n\n.fa-battery-0:before,\n.fa-battery-empty:before {\n  content: \"\"; }\n\n.fa-mouse-pointer:before {\n  content: \"\"; }\n\n.fa-i-cursor:before {\n  content: \"\"; }\n\n.fa-object-group:before {\n  content: \"\"; }\n\n.fa-object-ungroup:before {\n  content: \"\"; }\n\n.fa-sticky-note:before {\n  content: \"\"; }\n\n.fa-sticky-note-o:before {\n  content: \"\"; }\n\n.fa-cc-jcb:before {\n  content: \"\"; }\n\n.fa-cc-diners-club:before {\n  content: \"\"; }\n\n.fa-clone:before {\n  content: \"\"; }\n\n.fa-balance-scale:before {\n  content: \"\"; }\n\n.fa-hourglass-o:before {\n  content: \"\"; }\n\n.fa-hourglass-1:before,\n.fa-hourglass-start:before {\n  content: \"\"; }\n\n.fa-hourglass-2:before,\n.fa-hourglass-half:before {\n  content: \"\"; }\n\n.fa-hourglass-3:before,\n.fa-hourglass-end:before {\n  content: \"\"; }\n\n.fa-hourglass:before {\n  content: \"\"; }\n\n.fa-hand-grab-o:before,\n.fa-hand-rock-o:before {\n  content: \"\"; }\n\n.fa-hand-stop-o:before,\n.fa-hand-paper-o:before {\n  content: \"\"; }\n\n.fa-hand-scissors-o:before {\n  content: \"\"; }\n\n.fa-hand-lizard-o:before {\n  content: \"\"; }\n\n.fa-hand-spock-o:before {\n  content: \"\"; }\n\n.fa-hand-pointer-o:before {\n  content: \"\"; }\n\n.fa-hand-peace-o:before {\n  content: \"\"; }\n\n.fa-trademark:before {\n  content: \"\"; }\n\n.fa-registered:before {\n  content: \"\"; }\n\n.fa-creative-commons:before {\n  content: \"\"; }\n\n.fa-gg:before {\n  content: \"\"; }\n\n.fa-gg-circle:before {\n  content: \"\"; }\n\n.fa-tripadvisor:before {\n  content: \"\"; }\n\n.fa-odnoklassniki:before {\n  content: \"\"; }\n\n.fa-odnoklassniki-square:before {\n  content: \"\"; }\n\n.fa-get-pocket:before {\n  content: \"\"; }\n\n.fa-wikipedia-w:before {\n  content: \"\"; }\n\n.fa-safari:before {\n  content: \"\"; }\n\n.fa-chrome:before {\n  content: \"\"; }\n\n.fa-firefox:before {\n  content: \"\"; }\n\n.fa-opera:before {\n  content: \"\"; }\n\n.fa-internet-explorer:before {\n  content: \"\"; }\n\n.fa-tv:before,\n.fa-television:before {\n  content: \"\"; }\n\n.fa-contao:before {\n  content: \"\"; }\n\n.fa-500px:before {\n  content: \"\"; }\n\n.fa-amazon:before {\n  content: \"\"; }\n\n.fa-calendar-plus-o:before {\n  content: \"\"; }\n\n.fa-calendar-minus-o:before {\n  content: \"\"; }\n\n.fa-calendar-times-o:before {\n  content: \"\"; }\n\n.fa-calendar-check-o:before {\n  content: \"\"; }\n\n.fa-industry:before {\n  content: \"\"; }\n\n.fa-map-pin:before {\n  content: \"\"; }\n\n.fa-map-signs:before {\n  content: \"\"; }\n\n.fa-map-o:before {\n  content: \"\"; }\n\n.fa-map:before {\n  content: \"\"; }\n\n.fa-commenting:before {\n  content: \"\"; }\n\n.fa-commenting-o:before {\n  content: \"\"; }\n\n.fa-houzz:before {\n  content: \"\"; }\n\n.fa-vimeo:before {\n  content: \"\"; }\n\n.fa-black-tie:before {\n  content: \"\"; }\n\n.fa-fonticons:before {\n  content: \"\"; }\n\n.fa-reddit-alien:before {\n  content: \"\"; }\n\n.fa-edge:before {\n  content: \"\"; }\n\n.fa-credit-card-alt:before {\n  content: \"\"; }\n\n.fa-codiepie:before {\n  content: \"\"; }\n\n.fa-modx:before {\n  content: \"\"; }\n\n.fa-fort-awesome:before {\n  content: \"\"; }\n\n.fa-usb:before {\n  content: \"\"; }\n\n.fa-product-hunt:before {\n  content: \"\"; }\n\n.fa-mixcloud:before {\n  content: \"\"; }\n\n.fa-scribd:before {\n  content: \"\"; }\n\n.fa-pause-circle:before {\n  content: \"\"; }\n\n.fa-pause-circle-o:before {\n  content: \"\"; }\n\n.fa-stop-circle:before {\n  content: \"\"; }\n\n.fa-stop-circle-o:before {\n  content: \"\"; }\n\n.fa-shopping-bag:before {\n  content: \"\"; }\n\n.fa-shopping-basket:before {\n  content: \"\"; }\n\n.fa-hashtag:before {\n  content: \"\"; }\n\n.fa-bluetooth:before {\n  content: \"\"; }\n\n.fa-bluetooth-b:before {\n  content: \"\"; }\n\n.fa-percent:before {\n  content: \"\"; }\n\n.fa-gitlab:before {\n  content: \"\"; }\n\n.fa-wpbeginner:before {\n  content: \"\"; }\n\n.fa-wpforms:before {\n  content: \"\"; }\n\n.fa-envira:before {\n  content: \"\"; }\n\n.fa-universal-access:before {\n  content: \"\"; }\n\n.fa-wheelchair-alt:before {\n  content: \"\"; }\n\n.fa-question-circle-o:before {\n  content: \"\"; }\n\n.fa-blind:before {\n  content: \"\"; }\n\n.fa-audio-description:before {\n  content: \"\"; }\n\n.fa-volume-control-phone:before {\n  content: \"\"; }\n\n.fa-braille:before {\n  content: \"\"; }\n\n.fa-assistive-listening-systems:before {\n  content: \"\"; }\n\n.fa-asl-interpreting:before,\n.fa-american-sign-language-interpreting:before {\n  content: \"\"; }\n\n.fa-deafness:before,\n.fa-hard-of-hearing:before,\n.fa-deaf:before {\n  content: \"\"; }\n\n.fa-glide:before {\n  content: \"\"; }\n\n.fa-glide-g:before {\n  content: \"\"; }\n\n.fa-signing:before,\n.fa-sign-language:before {\n  content: \"\"; }\n\n.fa-low-vision:before {\n  content: \"\"; }\n\n.fa-viadeo:before {\n  content: \"\"; }\n\n.fa-viadeo-square:before {\n  content: \"\"; }\n\n.fa-snapchat:before {\n  content: \"\"; }\n\n.fa-snapchat-ghost:before {\n  content: \"\"; }\n\n.fa-snapchat-square:before {\n  content: \"\"; }\n\n.fa-pied-piper:before {\n  content: \"\"; }\n\n.fa-first-order:before {\n  content: \"\"; }\n\n.fa-yoast:before {\n  content: \"\"; }\n\n.fa-themeisle:before {\n  content: \"\"; }\n\n.fa-google-plus-circle:before,\n.fa-google-plus-official:before {\n  content: \"\"; }\n\n.fa-fa:before,\n.fa-font-awesome:before {\n  content: \"\"; }\n\n.fa-handshake-o:before {\n  content: \"\"; }\n\n.fa-envelope-open:before {\n  content: \"\"; }\n\n.fa-envelope-open-o:before {\n  content: \"\"; }\n\n.fa-linode:before {\n  content: \"\"; }\n\n.fa-address-book:before {\n  content: \"\"; }\n\n.fa-address-book-o:before {\n  content: \"\"; }\n\n.fa-vcard:before,\n.fa-address-card:before {\n  content: \"\"; }\n\n.fa-vcard-o:before,\n.fa-address-card-o:before {\n  content: \"\"; }\n\n.fa-user-circle:before {\n  content: \"\"; }\n\n.fa-user-circle-o:before {\n  content: \"\"; }\n\n.fa-user-o:before {\n  content: \"\"; }\n\n.fa-id-badge:before {\n  content: \"\"; }\n\n.fa-drivers-license:before,\n.fa-id-card:before {\n  content: \"\"; }\n\n.fa-drivers-license-o:before,\n.fa-id-card-o:before {\n  content: \"\"; }\n\n.fa-quora:before {\n  content: \"\"; }\n\n.fa-free-code-camp:before {\n  content: \"\"; }\n\n.fa-telegram:before {\n  content: \"\"; }\n\n.fa-thermometer-4:before,\n.fa-thermometer:before,\n.fa-thermometer-full:before {\n  content: \"\"; }\n\n.fa-thermometer-3:before,\n.fa-thermometer-three-quarters:before {\n  content: \"\"; }\n\n.fa-thermometer-2:before,\n.fa-thermometer-half:before {\n  content: \"\"; }\n\n.fa-thermometer-1:before,\n.fa-thermometer-quarter:before {\n  content: \"\"; }\n\n.fa-thermometer-0:before,\n.fa-thermometer-empty:before {\n  content: \"\"; }\n\n.fa-shower:before {\n  content: \"\"; }\n\n.fa-bathtub:before,\n.fa-s15:before,\n.fa-bath:before {\n  content: \"\"; }\n\n.fa-podcast:before {\n  content: \"\"; }\n\n.fa-window-maximize:before {\n  content: \"\"; }\n\n.fa-window-minimize:before {\n  content: \"\"; }\n\n.fa-window-restore:before {\n  content: \"\"; }\n\n.fa-times-rectangle:before,\n.fa-window-close:before {\n  content: \"\"; }\n\n.fa-times-rectangle-o:before,\n.fa-window-close-o:before {\n  content: \"\"; }\n\n.fa-bandcamp:before {\n  content: \"\"; }\n\n.fa-grav:before {\n  content: \"\"; }\n\n.fa-etsy:before {\n  content: \"\"; }\n\n.fa-imdb:before {\n  content: \"\"; }\n\n.fa-ravelry:before {\n  content: \"\"; }\n\n.fa-eercast:before {\n  content: \"\"; }\n\n.fa-microchip:before {\n  content: \"\"; }\n\n.fa-snowflake-o:before {\n  content: \"\"; }\n\n.fa-superpowers:before {\n  content: \"\"; }\n\n.fa-wpexplorer:before {\n  content: \"\"; }\n\n.fa-meetup:before {\n  content: \"\"; }\n\n.sr-only {\n  position: absolute;\n  width: 1px;\n  height: 1px;\n  padding: 0;\n  margin: -1px;\n  overflow: hidden;\n  clip: rect(0, 0, 0, 0);\n  border: 0; }\n\n.sr-only-focusable:active, .sr-only-focusable:focus {\n  position: static;\n  width: auto;\n  height: auto;\n  margin: 0;\n  overflow: visible;\n  clip: auto; }\n\n@font-face {\n  font-family: \"FontAwesome\";\n  font-style: normal;\n  font-weight: normal;\n  src: url(\"fonts/font-awesome/fontawesome-webfont.eot?#iefix\") format(\"embedded-opentype\"), url(\"fonts/font-awesome/fontawesome-webfont.woff2\") format(\"woff2\"), url(\"fonts/font-awesome/fontawesome-webfont.woff\") format(\"woff\"), url(\"fonts/font-awesome/fontawesome-webfont.ttf\") format(\"truetype\"), url(\"fonts/font-awesome/fontawesome-webfont.svg#FontAwesome\") format(\"svg\"); }\n\n@font-face {\n  font-family: \"Roboto-Regular\";\n  font-style: normal;\n  font-weight: normal;\n  src: url(\"fonts/Roboto/Roboto-Regular.eot?#iefix\") format(\"embedded-opentype\"), url(\"fonts/Roboto/Roboto-Regular.woff2\") format(\"woff2\"), url(\"fonts/Roboto/Roboto-Regular.woff\") format(\"woff\"), url(\"fonts/Roboto/Roboto-Regular.ttf\") format(\"truetype\"), url(\"fonts/Roboto/Roboto-Regular.svg#Roboto-Regular\") format(\"svg\"); }\n\nbody, html {\n  font-family: 'Roboto-Regular'; }\n\n* {\n  padding: 0;\n  margin: 0; }\n"
+	module.exports = "@charset \"UTF-8\";\n.container, .container-fluid {\n  margin-right: auto;\n  margin-left: auto; }\n\n.container-fluid {\n  padding-right: 2rem;\n  padding-left: 2rem; }\n\n.row {\n  box-sizing: border-box;\n  display: -webkit-box;\n  display: -ms-flexbox;\n  display: flex;\n  -webkit-box-flex: 0;\n  -ms-flex: 0 1 auto;\n  flex: 0 1 auto;\n  -webkit-box-orient: horizontal;\n  -webkit-box-direction: normal;\n  -ms-flex-direction: row;\n  flex-direction: row;\n  -ms-flex-wrap: wrap;\n  flex-wrap: wrap;\n  margin-right: -.5rem;\n  margin-left: -.5rem; }\n\n.row.reverse {\n  -webkit-box-orient: horizontal;\n  -webkit-box-direction: reverse;\n  -ms-flex-direction: row-reverse;\n  flex-direction: row-reverse; }\n\n.col.reverse {\n  -webkit-box-orient: vertical;\n  -webkit-box-direction: reverse;\n  -ms-flex-direction: column-reverse;\n  flex-direction: column-reverse; }\n\n.col-xs, .col-xs-1, .col-xs-10, .col-xs-11, .col-xs-12, .col-xs-2, .col-xs-3, .col-xs-4, .col-xs-5, .col-xs-6, .col-xs-7, .col-xs-8, .col-xs-9, .col-xs-offset-0, .col-xs-offset-1, .col-xs-offset-10, .col-xs-offset-11, .col-xs-offset-12, .col-xs-offset-2, .col-xs-offset-3, .col-xs-offset-4, .col-xs-offset-5, .col-xs-offset-6, .col-xs-offset-7, .col-xs-offset-8, .col-xs-offset-9 {\n  box-sizing: border-box;\n  -webkit-box-flex: 0;\n  -ms-flex: 0 0 auto;\n  flex: 0 0 auto;\n  padding-right: .5rem;\n  padding-left: .5rem; }\n\n.col-xs {\n  -webkit-box-flex: 1;\n  -ms-flex-positive: 1;\n  flex-grow: 1;\n  -ms-flex-preferred-size: 0;\n  flex-basis: 0;\n  max-width: 100%; }\n\n.col-xs-1 {\n  -ms-flex-preferred-size: 8.33333333%;\n  flex-basis: 8.33333333%;\n  max-width: 8.33333333%; }\n\n.col-xs-2 {\n  -ms-flex-preferred-size: 16.66666667%;\n  flex-basis: 16.66666667%;\n  max-width: 16.66666667%; }\n\n.col-xs-3 {\n  -ms-flex-preferred-size: 25%;\n  flex-basis: 25%;\n  max-width: 25%; }\n\n.col-xs-4 {\n  -ms-flex-preferred-size: 33.33333333%;\n  flex-basis: 33.33333333%;\n  max-width: 33.33333333%; }\n\n.col-xs-5 {\n  -ms-flex-preferred-size: 41.66666667%;\n  flex-basis: 41.66666667%;\n  max-width: 41.66666667%; }\n\n.col-xs-6 {\n  -ms-flex-preferred-size: 50%;\n  flex-basis: 50%;\n  max-width: 50%; }\n\n.col-xs-7 {\n  -ms-flex-preferred-size: 58.33333333%;\n  flex-basis: 58.33333333%;\n  max-width: 58.33333333%; }\n\n.col-xs-8 {\n  -ms-flex-preferred-size: 66.66666667%;\n  flex-basis: 66.66666667%;\n  max-width: 66.66666667%; }\n\n.col-xs-9 {\n  -ms-flex-preferred-size: 75%;\n  flex-basis: 75%;\n  max-width: 75%; }\n\n.col-xs-10 {\n  -ms-flex-preferred-size: 83.33333333%;\n  flex-basis: 83.33333333%;\n  max-width: 83.33333333%; }\n\n.col-xs-11 {\n  -ms-flex-preferred-size: 91.66666667%;\n  flex-basis: 91.66666667%;\n  max-width: 91.66666667%; }\n\n.col-xs-12 {\n  -ms-flex-preferred-size: 100%;\n  flex-basis: 100%;\n  max-width: 100%; }\n\n.col-xs-offset-0 {\n  margin-left: 0; }\n\n.col-xs-offset-1 {\n  margin-left: 8.33333333%; }\n\n.col-xs-offset-2 {\n  margin-left: 16.66666667%; }\n\n.col-xs-offset-3 {\n  margin-left: 25%; }\n\n.col-xs-offset-4 {\n  margin-left: 33.33333333%; }\n\n.col-xs-offset-5 {\n  margin-left: 41.66666667%; }\n\n.col-xs-offset-6 {\n  margin-left: 50%; }\n\n.col-xs-offset-7 {\n  margin-left: 58.33333333%; }\n\n.col-xs-offset-8 {\n  margin-left: 66.66666667%; }\n\n.col-xs-offset-9 {\n  margin-left: 75%; }\n\n.col-xs-offset-10 {\n  margin-left: 83.33333333%; }\n\n.col-xs-offset-11 {\n  margin-left: 91.66666667%; }\n\n.start-xs {\n  -webkit-box-pack: start;\n  -ms-flex-pack: start;\n  justify-content: flex-start;\n  text-align: start; }\n\n.center-xs {\n  -webkit-box-pack: center;\n  -ms-flex-pack: center;\n  justify-content: center;\n  text-align: center; }\n\n.end-xs {\n  -webkit-box-pack: end;\n  -ms-flex-pack: end;\n  justify-content: flex-end;\n  text-align: end; }\n\n.top-xs {\n  -webkit-box-align: start;\n  -ms-flex-align: start;\n  align-items: flex-start; }\n\n.middle-xs {\n  -webkit-box-align: center;\n  -ms-flex-align: center;\n  align-items: center; }\n\n.bottom-xs {\n  -webkit-box-align: end;\n  -ms-flex-align: end;\n  align-items: flex-end; }\n\n.around-xs {\n  -ms-flex-pack: distribute;\n  justify-content: space-around; }\n\n.between-xs {\n  -webkit-box-pack: justify;\n  -ms-flex-pack: justify;\n  justify-content: space-between; }\n\n.first-xs {\n  -webkit-box-ordinal-group: 0;\n  -ms-flex-order: -1;\n  order: -1; }\n\n.last-xs {\n  -webkit-box-ordinal-group: 2;\n  -ms-flex-order: 1;\n  order: 1; }\n\n@media only screen and (min-width: 48em) {\n  .container {\n    width: 49rem; }\n  .col-sm, .col-sm-1, .col-sm-10, .col-sm-11, .col-sm-12, .col-sm-2, .col-sm-3, .col-sm-4, .col-sm-5, .col-sm-6, .col-sm-7, .col-sm-8, .col-sm-9, .col-sm-offset-0, .col-sm-offset-1, .col-sm-offset-10, .col-sm-offset-11, .col-sm-offset-12, .col-sm-offset-2, .col-sm-offset-3, .col-sm-offset-4, .col-sm-offset-5, .col-sm-offset-6, .col-sm-offset-7, .col-sm-offset-8, .col-sm-offset-9 {\n    box-sizing: border-box;\n    -webkit-box-flex: 0;\n    -ms-flex: 0 0 auto;\n    flex: 0 0 auto;\n    padding-right: .5rem;\n    padding-left: .5rem; }\n  .col-sm {\n    -webkit-box-flex: 1;\n    -ms-flex-positive: 1;\n    flex-grow: 1;\n    -ms-flex-preferred-size: 0;\n    flex-basis: 0;\n    max-width: 100%; }\n  .col-sm-1 {\n    -ms-flex-preferred-size: 8.33333333%;\n    flex-basis: 8.33333333%;\n    max-width: 8.33333333%; }\n  .col-sm-2 {\n    -ms-flex-preferred-size: 16.66666667%;\n    flex-basis: 16.66666667%;\n    max-width: 16.66666667%; }\n  .col-sm-3 {\n    -ms-flex-preferred-size: 25%;\n    flex-basis: 25%;\n    max-width: 25%; }\n  .col-sm-4 {\n    -ms-flex-preferred-size: 33.33333333%;\n    flex-basis: 33.33333333%;\n    max-width: 33.33333333%; }\n  .col-sm-5 {\n    -ms-flex-preferred-size: 41.66666667%;\n    flex-basis: 41.66666667%;\n    max-width: 41.66666667%; }\n  .col-sm-6 {\n    -ms-flex-preferred-size: 50%;\n    flex-basis: 50%;\n    max-width: 50%; }\n  .col-sm-7 {\n    -ms-flex-preferred-size: 58.33333333%;\n    flex-basis: 58.33333333%;\n    max-width: 58.33333333%; }\n  .col-sm-8 {\n    -ms-flex-preferred-size: 66.66666667%;\n    flex-basis: 66.66666667%;\n    max-width: 66.66666667%; }\n  .col-sm-9 {\n    -ms-flex-preferred-size: 75%;\n    flex-basis: 75%;\n    max-width: 75%; }\n  .col-sm-10 {\n    -ms-flex-preferred-size: 83.33333333%;\n    flex-basis: 83.33333333%;\n    max-width: 83.33333333%; }\n  .col-sm-11 {\n    -ms-flex-preferred-size: 91.66666667%;\n    flex-basis: 91.66666667%;\n    max-width: 91.66666667%; }\n  .col-sm-12 {\n    -ms-flex-preferred-size: 100%;\n    flex-basis: 100%;\n    max-width: 100%; }\n  .col-sm-offset-0 {\n    margin-left: 0; }\n  .col-sm-offset-1 {\n    margin-left: 8.33333333%; }\n  .col-sm-offset-2 {\n    margin-left: 16.66666667%; }\n  .col-sm-offset-3 {\n    margin-left: 25%; }\n  .col-sm-offset-4 {\n    margin-left: 33.33333333%; }\n  .col-sm-offset-5 {\n    margin-left: 41.66666667%; }\n  .col-sm-offset-6 {\n    margin-left: 50%; }\n  .col-sm-offset-7 {\n    margin-left: 58.33333333%; }\n  .col-sm-offset-8 {\n    margin-left: 66.66666667%; }\n  .col-sm-offset-9 {\n    margin-left: 75%; }\n  .col-sm-offset-10 {\n    margin-left: 83.33333333%; }\n  .col-sm-offset-11 {\n    margin-left: 91.66666667%; }\n  .start-sm {\n    -webkit-box-pack: start;\n    -ms-flex-pack: start;\n    justify-content: flex-start;\n    text-align: start; }\n  .center-sm {\n    -webkit-box-pack: center;\n    -ms-flex-pack: center;\n    justify-content: center;\n    text-align: center; }\n  .end-sm {\n    -webkit-box-pack: end;\n    -ms-flex-pack: end;\n    justify-content: flex-end;\n    text-align: end; }\n  .top-sm {\n    -webkit-box-align: start;\n    -ms-flex-align: start;\n    align-items: flex-start; }\n  .middle-sm {\n    -webkit-box-align: center;\n    -ms-flex-align: center;\n    align-items: center; }\n  .bottom-sm {\n    -webkit-box-align: end;\n    -ms-flex-align: end;\n    align-items: flex-end; }\n  .around-sm {\n    -ms-flex-pack: distribute;\n    justify-content: space-around; }\n  .between-sm {\n    -webkit-box-pack: justify;\n    -ms-flex-pack: justify;\n    justify-content: space-between; }\n  .first-sm {\n    -webkit-box-ordinal-group: 0;\n    -ms-flex-order: -1;\n    order: -1; }\n  .last-sm {\n    -webkit-box-ordinal-group: 2;\n    -ms-flex-order: 1;\n    order: 1; } }\n\n@media only screen and (min-width: 64em) {\n  .container {\n    width: 65rem; }\n  .col-md, .col-md-1, .col-md-10, .col-md-11, .col-md-12, .col-md-2, .col-md-3, .col-md-4, .col-md-5, .col-md-6, .col-md-7, .col-md-8, .col-md-9, .col-md-offset-0, .col-md-offset-1, .col-md-offset-10, .col-md-offset-11, .col-md-offset-12, .col-md-offset-2, .col-md-offset-3, .col-md-offset-4, .col-md-offset-5, .col-md-offset-6, .col-md-offset-7, .col-md-offset-8, .col-md-offset-9 {\n    box-sizing: border-box;\n    -webkit-box-flex: 0;\n    -ms-flex: 0 0 auto;\n    flex: 0 0 auto;\n    padding-right: .5rem;\n    padding-left: .5rem; }\n  .col-md {\n    -webkit-box-flex: 1;\n    -ms-flex-positive: 1;\n    flex-grow: 1;\n    -ms-flex-preferred-size: 0;\n    flex-basis: 0;\n    max-width: 100%; }\n  .col-md-1 {\n    -ms-flex-preferred-size: 8.33333333%;\n    flex-basis: 8.33333333%;\n    max-width: 8.33333333%; }\n  .col-md-2 {\n    -ms-flex-preferred-size: 16.66666667%;\n    flex-basis: 16.66666667%;\n    max-width: 16.66666667%; }\n  .col-md-3 {\n    -ms-flex-preferred-size: 25%;\n    flex-basis: 25%;\n    max-width: 25%; }\n  .col-md-4 {\n    -ms-flex-preferred-size: 33.33333333%;\n    flex-basis: 33.33333333%;\n    max-width: 33.33333333%; }\n  .col-md-5 {\n    -ms-flex-preferred-size: 41.66666667%;\n    flex-basis: 41.66666667%;\n    max-width: 41.66666667%; }\n  .col-md-6 {\n    -ms-flex-preferred-size: 50%;\n    flex-basis: 50%;\n    max-width: 50%; }\n  .col-md-7 {\n    -ms-flex-preferred-size: 58.33333333%;\n    flex-basis: 58.33333333%;\n    max-width: 58.33333333%; }\n  .col-md-8 {\n    -ms-flex-preferred-size: 66.66666667%;\n    flex-basis: 66.66666667%;\n    max-width: 66.66666667%; }\n  .col-md-9 {\n    -ms-flex-preferred-size: 75%;\n    flex-basis: 75%;\n    max-width: 75%; }\n  .col-md-10 {\n    -ms-flex-preferred-size: 83.33333333%;\n    flex-basis: 83.33333333%;\n    max-width: 83.33333333%; }\n  .col-md-11 {\n    -ms-flex-preferred-size: 91.66666667%;\n    flex-basis: 91.66666667%;\n    max-width: 91.66666667%; }\n  .col-md-12 {\n    -ms-flex-preferred-size: 100%;\n    flex-basis: 100%;\n    max-width: 100%; }\n  .col-md-offset-0 {\n    margin-left: 0; }\n  .col-md-offset-1 {\n    margin-left: 8.33333333%; }\n  .col-md-offset-2 {\n    margin-left: 16.66666667%; }\n  .col-md-offset-3 {\n    margin-left: 25%; }\n  .col-md-offset-4 {\n    margin-left: 33.33333333%; }\n  .col-md-offset-5 {\n    margin-left: 41.66666667%; }\n  .col-md-offset-6 {\n    margin-left: 50%; }\n  .col-md-offset-7 {\n    margin-left: 58.33333333%; }\n  .col-md-offset-8 {\n    margin-left: 66.66666667%; }\n  .col-md-offset-9 {\n    margin-left: 75%; }\n  .col-md-offset-10 {\n    margin-left: 83.33333333%; }\n  .col-md-offset-11 {\n    margin-left: 91.66666667%; }\n  .start-md {\n    -webkit-box-pack: start;\n    -ms-flex-pack: start;\n    justify-content: flex-start;\n    text-align: start; }\n  .center-md {\n    -webkit-box-pack: center;\n    -ms-flex-pack: center;\n    justify-content: center;\n    text-align: center; }\n  .end-md {\n    -webkit-box-pack: end;\n    -ms-flex-pack: end;\n    justify-content: flex-end;\n    text-align: end; }\n  .top-md {\n    -webkit-box-align: start;\n    -ms-flex-align: start;\n    align-items: flex-start; }\n  .middle-md {\n    -webkit-box-align: center;\n    -ms-flex-align: center;\n    align-items: center; }\n  .bottom-md {\n    -webkit-box-align: end;\n    -ms-flex-align: end;\n    align-items: flex-end; }\n  .around-md {\n    -ms-flex-pack: distribute;\n    justify-content: space-around; }\n  .between-md {\n    -webkit-box-pack: justify;\n    -ms-flex-pack: justify;\n    justify-content: space-between; }\n  .first-md {\n    -webkit-box-ordinal-group: 0;\n    -ms-flex-order: -1;\n    order: -1; }\n  .last-md {\n    -webkit-box-ordinal-group: 2;\n    -ms-flex-order: 1;\n    order: 1; } }\n\n@media only screen and (min-width: 75em) {\n  .container {\n    width: 76rem; }\n  .col-lg, .col-lg-1, .col-lg-10, .col-lg-11, .col-lg-12, .col-lg-2, .col-lg-3, .col-lg-4, .col-lg-5, .col-lg-6, .col-lg-7, .col-lg-8, .col-lg-9, .col-lg-offset-0, .col-lg-offset-1, .col-lg-offset-10, .col-lg-offset-11, .col-lg-offset-12, .col-lg-offset-2, .col-lg-offset-3, .col-lg-offset-4, .col-lg-offset-5, .col-lg-offset-6, .col-lg-offset-7, .col-lg-offset-8, .col-lg-offset-9 {\n    box-sizing: border-box;\n    -webkit-box-flex: 0;\n    -ms-flex: 0 0 auto;\n    flex: 0 0 auto;\n    padding-right: .5rem;\n    padding-left: .5rem; }\n  .col-lg {\n    -webkit-box-flex: 1;\n    -ms-flex-positive: 1;\n    flex-grow: 1;\n    -ms-flex-preferred-size: 0;\n    flex-basis: 0;\n    max-width: 100%; }\n  .col-lg-1 {\n    -ms-flex-preferred-size: 8.33333333%;\n    flex-basis: 8.33333333%;\n    max-width: 8.33333333%; }\n  .col-lg-2 {\n    -ms-flex-preferred-size: 16.66666667%;\n    flex-basis: 16.66666667%;\n    max-width: 16.66666667%; }\n  .col-lg-3 {\n    -ms-flex-preferred-size: 25%;\n    flex-basis: 25%;\n    max-width: 25%; }\n  .col-lg-4 {\n    -ms-flex-preferred-size: 33.33333333%;\n    flex-basis: 33.33333333%;\n    max-width: 33.33333333%; }\n  .col-lg-5 {\n    -ms-flex-preferred-size: 41.66666667%;\n    flex-basis: 41.66666667%;\n    max-width: 41.66666667%; }\n  .col-lg-6 {\n    -ms-flex-preferred-size: 50%;\n    flex-basis: 50%;\n    max-width: 50%; }\n  .col-lg-7 {\n    -ms-flex-preferred-size: 58.33333333%;\n    flex-basis: 58.33333333%;\n    max-width: 58.33333333%; }\n  .col-lg-8 {\n    -ms-flex-preferred-size: 66.66666667%;\n    flex-basis: 66.66666667%;\n    max-width: 66.66666667%; }\n  .col-lg-9 {\n    -ms-flex-preferred-size: 75%;\n    flex-basis: 75%;\n    max-width: 75%; }\n  .col-lg-10 {\n    -ms-flex-preferred-size: 83.33333333%;\n    flex-basis: 83.33333333%;\n    max-width: 83.33333333%; }\n  .col-lg-11 {\n    -ms-flex-preferred-size: 91.66666667%;\n    flex-basis: 91.66666667%;\n    max-width: 91.66666667%; }\n  .col-lg-12 {\n    -ms-flex-preferred-size: 100%;\n    flex-basis: 100%;\n    max-width: 100%; }\n  .col-lg-offset-0 {\n    margin-left: 0; }\n  .col-lg-offset-1 {\n    margin-left: 8.33333333%; }\n  .col-lg-offset-2 {\n    margin-left: 16.66666667%; }\n  .col-lg-offset-3 {\n    margin-left: 25%; }\n  .col-lg-offset-4 {\n    margin-left: 33.33333333%; }\n  .col-lg-offset-5 {\n    margin-left: 41.66666667%; }\n  .col-lg-offset-6 {\n    margin-left: 50%; }\n  .col-lg-offset-7 {\n    margin-left: 58.33333333%; }\n  .col-lg-offset-8 {\n    margin-left: 66.66666667%; }\n  .col-lg-offset-9 {\n    margin-left: 75%; }\n  .col-lg-offset-10 {\n    margin-left: 83.33333333%; }\n  .col-lg-offset-11 {\n    margin-left: 91.66666667%; }\n  .start-lg {\n    -webkit-box-pack: start;\n    -ms-flex-pack: start;\n    justify-content: flex-start;\n    text-align: start; }\n  .center-lg {\n    -webkit-box-pack: center;\n    -ms-flex-pack: center;\n    justify-content: center;\n    text-align: center; }\n  .end-lg {\n    -webkit-box-pack: end;\n    -ms-flex-pack: end;\n    justify-content: flex-end;\n    text-align: end; }\n  .top-lg {\n    -webkit-box-align: start;\n    -ms-flex-align: start;\n    align-items: flex-start; }\n  .middle-lg {\n    -webkit-box-align: center;\n    -ms-flex-align: center;\n    align-items: center; }\n  .bottom-lg {\n    -webkit-box-align: end;\n    -ms-flex-align: end;\n    align-items: flex-end; }\n  .around-lg {\n    -ms-flex-pack: distribute;\n    justify-content: space-around; }\n  .between-lg {\n    -webkit-box-pack: justify;\n    -ms-flex-pack: justify;\n    justify-content: space-between; }\n  .first-lg {\n    -webkit-box-ordinal-group: 0;\n    -ms-flex-order: -1;\n    order: -1; }\n  .last-lg {\n    -webkit-box-ordinal-group: 2;\n    -ms-flex-order: 1;\n    order: 1; } }\n\n/*!\n *  Font Awesome 4.7.0 by @davegandy - http://fontawesome.io - @fontawesome\n *  License - http://fontawesome.io/license (Font: SIL OFL 1.1, CSS: MIT License)\n */\n/* FONT PATH\n * -------------------------- */\n@font-face {\n  font-family: 'FontAwesome';\n  src: url(\"../fonts/fontawesome-webfont.eot?v=4.7.0\");\n  src: url(\"../fonts/fontawesome-webfont.eot?#iefix&v=4.7.0\") format(\"embedded-opentype\"), url(\"../fonts/fontawesome-webfont.woff2?v=4.7.0\") format(\"woff2\"), url(\"../fonts/fontawesome-webfont.woff?v=4.7.0\") format(\"woff\"), url(\"../fonts/fontawesome-webfont.ttf?v=4.7.0\") format(\"truetype\"), url(\"../fonts/fontawesome-webfont.svg?v=4.7.0#fontawesomeregular\") format(\"svg\");\n  font-weight: normal;\n  font-style: normal; }\n\n.fa {\n  display: inline-block;\n  font: normal normal normal 14px/1 FontAwesome;\n  font-size: inherit;\n  text-rendering: auto;\n  -webkit-font-smoothing: antialiased;\n  -moz-osx-font-smoothing: grayscale; }\n\n/* makes the font 33% larger relative to the icon container */\n.fa-lg {\n  font-size: 1.33333em;\n  line-height: 0.75em;\n  vertical-align: -15%; }\n\n.fa-2x {\n  font-size: 2em; }\n\n.fa-3x {\n  font-size: 3em; }\n\n.fa-4x {\n  font-size: 4em; }\n\n.fa-5x {\n  font-size: 5em; }\n\n.fa-fw {\n  width: 1.28571em;\n  text-align: center; }\n\n.fa-ul {\n  padding-left: 0;\n  margin-left: 2.14286em;\n  list-style-type: none; }\n  .fa-ul > li {\n    position: relative; }\n\n.fa-li {\n  position: absolute;\n  left: -2.14286em;\n  width: 2.14286em;\n  top: 0.14286em;\n  text-align: center; }\n  .fa-li.fa-lg {\n    left: -1.85714em; }\n\n.fa-border {\n  padding: .2em .25em .15em;\n  border: solid 0.08em #eee;\n  border-radius: .1em; }\n\n.fa-pull-left {\n  float: left; }\n\n.fa-pull-right {\n  float: right; }\n\n.fa.fa-pull-left {\n  margin-right: .3em; }\n\n.fa.fa-pull-right {\n  margin-left: .3em; }\n\n/* Deprecated as of 4.4.0 */\n.pull-right {\n  float: right; }\n\n.pull-left {\n  float: left; }\n\n.fa.pull-left {\n  margin-right: .3em; }\n\n.fa.pull-right {\n  margin-left: .3em; }\n\n.fa-spin {\n  -webkit-animation: fa-spin 2s infinite linear;\n  animation: fa-spin 2s infinite linear; }\n\n.fa-pulse {\n  -webkit-animation: fa-spin 1s infinite steps(8);\n  animation: fa-spin 1s infinite steps(8); }\n\n@-webkit-keyframes fa-spin {\n  0% {\n    -webkit-transform: rotate(0deg);\n    transform: rotate(0deg); }\n  100% {\n    -webkit-transform: rotate(359deg);\n    transform: rotate(359deg); } }\n\n@keyframes fa-spin {\n  0% {\n    -webkit-transform: rotate(0deg);\n    transform: rotate(0deg); }\n  100% {\n    -webkit-transform: rotate(359deg);\n    transform: rotate(359deg); } }\n\n.fa-rotate-90 {\n  -ms-filter: \"progid:DXImageTransform.Microsoft.BasicImage(rotation=1)\";\n  -webkit-transform: rotate(90deg);\n  -ms-transform: rotate(90deg);\n  transform: rotate(90deg); }\n\n.fa-rotate-180 {\n  -ms-filter: \"progid:DXImageTransform.Microsoft.BasicImage(rotation=2)\";\n  -webkit-transform: rotate(180deg);\n  -ms-transform: rotate(180deg);\n  transform: rotate(180deg); }\n\n.fa-rotate-270 {\n  -ms-filter: \"progid:DXImageTransform.Microsoft.BasicImage(rotation=3)\";\n  -webkit-transform: rotate(270deg);\n  -ms-transform: rotate(270deg);\n  transform: rotate(270deg); }\n\n.fa-flip-horizontal {\n  -ms-filter: \"progid:DXImageTransform.Microsoft.BasicImage(rotation=0, mirror=1)\";\n  -webkit-transform: scale(-1, 1);\n  -ms-transform: scale(-1, 1);\n  transform: scale(-1, 1); }\n\n.fa-flip-vertical {\n  -ms-filter: \"progid:DXImageTransform.Microsoft.BasicImage(rotation=2, mirror=1)\";\n  -webkit-transform: scale(1, -1);\n  -ms-transform: scale(1, -1);\n  transform: scale(1, -1); }\n\n:root .fa-rotate-90,\n:root .fa-rotate-180,\n:root .fa-rotate-270,\n:root .fa-flip-horizontal,\n:root .fa-flip-vertical {\n  filter: none; }\n\n.fa-stack {\n  position: relative;\n  display: inline-block;\n  width: 2em;\n  height: 2em;\n  line-height: 2em;\n  vertical-align: middle; }\n\n.fa-stack-1x, .fa-stack-2x {\n  position: absolute;\n  left: 0;\n  width: 100%;\n  text-align: center; }\n\n.fa-stack-1x {\n  line-height: inherit; }\n\n.fa-stack-2x {\n  font-size: 2em; }\n\n.fa-inverse {\n  color: #fff; }\n\n/* Font Awesome uses the Unicode Private Use Area (PUA) to ensure screen\n   readers do not read off random characters that represent icons */\n.fa-glass:before {\n  content: \"\"; }\n\n.fa-music:before {\n  content: \"\"; }\n\n.fa-search:before {\n  content: \"\"; }\n\n.fa-envelope-o:before {\n  content: \"\"; }\n\n.fa-heart:before {\n  content: \"\"; }\n\n.fa-star:before {\n  content: \"\"; }\n\n.fa-star-o:before {\n  content: \"\"; }\n\n.fa-user:before {\n  content: \"\"; }\n\n.fa-film:before {\n  content: \"\"; }\n\n.fa-th-large:before {\n  content: \"\"; }\n\n.fa-th:before {\n  content: \"\"; }\n\n.fa-th-list:before {\n  content: \"\"; }\n\n.fa-check:before {\n  content: \"\"; }\n\n.fa-remove:before,\n.fa-close:before,\n.fa-times:before {\n  content: \"\"; }\n\n.fa-search-plus:before {\n  content: \"\"; }\n\n.fa-search-minus:before {\n  content: \"\"; }\n\n.fa-power-off:before {\n  content: \"\"; }\n\n.fa-signal:before {\n  content: \"\"; }\n\n.fa-gear:before,\n.fa-cog:before {\n  content: \"\"; }\n\n.fa-trash-o:before {\n  content: \"\"; }\n\n.fa-home:before {\n  content: \"\"; }\n\n.fa-file-o:before {\n  content: \"\"; }\n\n.fa-clock-o:before {\n  content: \"\"; }\n\n.fa-road:before {\n  content: \"\"; }\n\n.fa-download:before {\n  content: \"\"; }\n\n.fa-arrow-circle-o-down:before {\n  content: \"\"; }\n\n.fa-arrow-circle-o-up:before {\n  content: \"\"; }\n\n.fa-inbox:before {\n  content: \"\"; }\n\n.fa-play-circle-o:before {\n  content: \"\"; }\n\n.fa-rotate-right:before,\n.fa-repeat:before {\n  content: \"\"; }\n\n.fa-refresh:before {\n  content: \"\"; }\n\n.fa-list-alt:before {\n  content: \"\"; }\n\n.fa-lock:before {\n  content: \"\"; }\n\n.fa-flag:before {\n  content: \"\"; }\n\n.fa-headphones:before {\n  content: \"\"; }\n\n.fa-volume-off:before {\n  content: \"\"; }\n\n.fa-volume-down:before {\n  content: \"\"; }\n\n.fa-volume-up:before {\n  content: \"\"; }\n\n.fa-qrcode:before {\n  content: \"\"; }\n\n.fa-barcode:before {\n  content: \"\"; }\n\n.fa-tag:before {\n  content: \"\"; }\n\n.fa-tags:before {\n  content: \"\"; }\n\n.fa-book:before {\n  content: \"\"; }\n\n.fa-bookmark:before {\n  content: \"\"; }\n\n.fa-print:before {\n  content: \"\"; }\n\n.fa-camera:before {\n  content: \"\"; }\n\n.fa-font:before {\n  content: \"\"; }\n\n.fa-bold:before {\n  content: \"\"; }\n\n.fa-italic:before {\n  content: \"\"; }\n\n.fa-text-height:before {\n  content: \"\"; }\n\n.fa-text-width:before {\n  content: \"\"; }\n\n.fa-align-left:before {\n  content: \"\"; }\n\n.fa-align-center:before {\n  content: \"\"; }\n\n.fa-align-right:before {\n  content: \"\"; }\n\n.fa-align-justify:before {\n  content: \"\"; }\n\n.fa-list:before {\n  content: \"\"; }\n\n.fa-dedent:before,\n.fa-outdent:before {\n  content: \"\"; }\n\n.fa-indent:before {\n  content: \"\"; }\n\n.fa-video-camera:before {\n  content: \"\"; }\n\n.fa-photo:before,\n.fa-image:before,\n.fa-picture-o:before {\n  content: \"\"; }\n\n.fa-pencil:before {\n  content: \"\"; }\n\n.fa-map-marker:before {\n  content: \"\"; }\n\n.fa-adjust:before {\n  content: \"\"; }\n\n.fa-tint:before {\n  content: \"\"; }\n\n.fa-edit:before,\n.fa-pencil-square-o:before {\n  content: \"\"; }\n\n.fa-share-square-o:before {\n  content: \"\"; }\n\n.fa-check-square-o:before {\n  content: \"\"; }\n\n.fa-arrows:before {\n  content: \"\"; }\n\n.fa-step-backward:before {\n  content: \"\"; }\n\n.fa-fast-backward:before {\n  content: \"\"; }\n\n.fa-backward:before {\n  content: \"\"; }\n\n.fa-play:before {\n  content: \"\"; }\n\n.fa-pause:before {\n  content: \"\"; }\n\n.fa-stop:before {\n  content: \"\"; }\n\n.fa-forward:before {\n  content: \"\"; }\n\n.fa-fast-forward:before {\n  content: \"\"; }\n\n.fa-step-forward:before {\n  content: \"\"; }\n\n.fa-eject:before {\n  content: \"\"; }\n\n.fa-chevron-left:before {\n  content: \"\"; }\n\n.fa-chevron-right:before {\n  content: \"\"; }\n\n.fa-plus-circle:before {\n  content: \"\"; }\n\n.fa-minus-circle:before {\n  content: \"\"; }\n\n.fa-times-circle:before {\n  content: \"\"; }\n\n.fa-check-circle:before {\n  content: \"\"; }\n\n.fa-question-circle:before {\n  content: \"\"; }\n\n.fa-info-circle:before {\n  content: \"\"; }\n\n.fa-crosshairs:before {\n  content: \"\"; }\n\n.fa-times-circle-o:before {\n  content: \"\"; }\n\n.fa-check-circle-o:before {\n  content: \"\"; }\n\n.fa-ban:before {\n  content: \"\"; }\n\n.fa-arrow-left:before {\n  content: \"\"; }\n\n.fa-arrow-right:before {\n  content: \"\"; }\n\n.fa-arrow-up:before {\n  content: \"\"; }\n\n.fa-arrow-down:before {\n  content: \"\"; }\n\n.fa-mail-forward:before,\n.fa-share:before {\n  content: \"\"; }\n\n.fa-expand:before {\n  content: \"\"; }\n\n.fa-compress:before {\n  content: \"\"; }\n\n.fa-plus:before {\n  content: \"\"; }\n\n.fa-minus:before {\n  content: \"\"; }\n\n.fa-asterisk:before {\n  content: \"\"; }\n\n.fa-exclamation-circle:before {\n  content: \"\"; }\n\n.fa-gift:before {\n  content: \"\"; }\n\n.fa-leaf:before {\n  content: \"\"; }\n\n.fa-fire:before {\n  content: \"\"; }\n\n.fa-eye:before {\n  content: \"\"; }\n\n.fa-eye-slash:before {\n  content: \"\"; }\n\n.fa-warning:before,\n.fa-exclamation-triangle:before {\n  content: \"\"; }\n\n.fa-plane:before {\n  content: \"\"; }\n\n.fa-calendar:before {\n  content: \"\"; }\n\n.fa-random:before {\n  content: \"\"; }\n\n.fa-comment:before {\n  content: \"\"; }\n\n.fa-magnet:before {\n  content: \"\"; }\n\n.fa-chevron-up:before {\n  content: \"\"; }\n\n.fa-chevron-down:before {\n  content: \"\"; }\n\n.fa-retweet:before {\n  content: \"\"; }\n\n.fa-shopping-cart:before {\n  content: \"\"; }\n\n.fa-folder:before {\n  content: \"\"; }\n\n.fa-folder-open:before {\n  content: \"\"; }\n\n.fa-arrows-v:before {\n  content: \"\"; }\n\n.fa-arrows-h:before {\n  content: \"\"; }\n\n.fa-bar-chart-o:before,\n.fa-bar-chart:before {\n  content: \"\"; }\n\n.fa-twitter-square:before {\n  content: \"\"; }\n\n.fa-facebook-square:before {\n  content: \"\"; }\n\n.fa-camera-retro:before {\n  content: \"\"; }\n\n.fa-key:before {\n  content: \"\"; }\n\n.fa-gears:before,\n.fa-cogs:before {\n  content: \"\"; }\n\n.fa-comments:before {\n  content: \"\"; }\n\n.fa-thumbs-o-up:before {\n  content: \"\"; }\n\n.fa-thumbs-o-down:before {\n  content: \"\"; }\n\n.fa-star-half:before {\n  content: \"\"; }\n\n.fa-heart-o:before {\n  content: \"\"; }\n\n.fa-sign-out:before {\n  content: \"\"; }\n\n.fa-linkedin-square:before {\n  content: \"\"; }\n\n.fa-thumb-tack:before {\n  content: \"\"; }\n\n.fa-external-link:before {\n  content: \"\"; }\n\n.fa-sign-in:before {\n  content: \"\"; }\n\n.fa-trophy:before {\n  content: \"\"; }\n\n.fa-github-square:before {\n  content: \"\"; }\n\n.fa-upload:before {\n  content: \"\"; }\n\n.fa-lemon-o:before {\n  content: \"\"; }\n\n.fa-phone:before {\n  content: \"\"; }\n\n.fa-square-o:before {\n  content: \"\"; }\n\n.fa-bookmark-o:before {\n  content: \"\"; }\n\n.fa-phone-square:before {\n  content: \"\"; }\n\n.fa-twitter:before {\n  content: \"\"; }\n\n.fa-facebook-f:before,\n.fa-facebook:before {\n  content: \"\"; }\n\n.fa-github:before {\n  content: \"\"; }\n\n.fa-unlock:before {\n  content: \"\"; }\n\n.fa-credit-card:before {\n  content: \"\"; }\n\n.fa-feed:before,\n.fa-rss:before {\n  content: \"\"; }\n\n.fa-hdd-o:before {\n  content: \"\"; }\n\n.fa-bullhorn:before {\n  content: \"\"; }\n\n.fa-bell:before {\n  content: \"\"; }\n\n.fa-certificate:before {\n  content: \"\"; }\n\n.fa-hand-o-right:before {\n  content: \"\"; }\n\n.fa-hand-o-left:before {\n  content: \"\"; }\n\n.fa-hand-o-up:before {\n  content: \"\"; }\n\n.fa-hand-o-down:before {\n  content: \"\"; }\n\n.fa-arrow-circle-left:before {\n  content: \"\"; }\n\n.fa-arrow-circle-right:before {\n  content: \"\"; }\n\n.fa-arrow-circle-up:before {\n  content: \"\"; }\n\n.fa-arrow-circle-down:before {\n  content: \"\"; }\n\n.fa-globe:before {\n  content: \"\"; }\n\n.fa-wrench:before {\n  content: \"\"; }\n\n.fa-tasks:before {\n  content: \"\"; }\n\n.fa-filter:before {\n  content: \"\"; }\n\n.fa-briefcase:before {\n  content: \"\"; }\n\n.fa-arrows-alt:before {\n  content: \"\"; }\n\n.fa-group:before,\n.fa-users:before {\n  content: \"\"; }\n\n.fa-chain:before,\n.fa-link:before {\n  content: \"\"; }\n\n.fa-cloud:before {\n  content: \"\"; }\n\n.fa-flask:before {\n  content: \"\"; }\n\n.fa-cut:before,\n.fa-scissors:before {\n  content: \"\"; }\n\n.fa-copy:before,\n.fa-files-o:before {\n  content: \"\"; }\n\n.fa-paperclip:before {\n  content: \"\"; }\n\n.fa-save:before,\n.fa-floppy-o:before {\n  content: \"\"; }\n\n.fa-square:before {\n  content: \"\"; }\n\n.fa-navicon:before,\n.fa-reorder:before,\n.fa-bars:before {\n  content: \"\"; }\n\n.fa-list-ul:before {\n  content: \"\"; }\n\n.fa-list-ol:before {\n  content: \"\"; }\n\n.fa-strikethrough:before {\n  content: \"\"; }\n\n.fa-underline:before {\n  content: \"\"; }\n\n.fa-table:before {\n  content: \"\"; }\n\n.fa-magic:before {\n  content: \"\"; }\n\n.fa-truck:before {\n  content: \"\"; }\n\n.fa-pinterest:before {\n  content: \"\"; }\n\n.fa-pinterest-square:before {\n  content: \"\"; }\n\n.fa-google-plus-square:before {\n  content: \"\"; }\n\n.fa-google-plus:before {\n  content: \"\"; }\n\n.fa-money:before {\n  content: \"\"; }\n\n.fa-caret-down:before {\n  content: \"\"; }\n\n.fa-caret-up:before {\n  content: \"\"; }\n\n.fa-caret-left:before {\n  content: \"\"; }\n\n.fa-caret-right:before {\n  content: \"\"; }\n\n.fa-columns:before {\n  content: \"\"; }\n\n.fa-unsorted:before,\n.fa-sort:before {\n  content: \"\"; }\n\n.fa-sort-down:before,\n.fa-sort-desc:before {\n  content: \"\"; }\n\n.fa-sort-up:before,\n.fa-sort-asc:before {\n  content: \"\"; }\n\n.fa-envelope:before {\n  content: \"\"; }\n\n.fa-linkedin:before {\n  content: \"\"; }\n\n.fa-rotate-left:before,\n.fa-undo:before {\n  content: \"\"; }\n\n.fa-legal:before,\n.fa-gavel:before {\n  content: \"\"; }\n\n.fa-dashboard:before,\n.fa-tachometer:before {\n  content: \"\"; }\n\n.fa-comment-o:before {\n  content: \"\"; }\n\n.fa-comments-o:before {\n  content: \"\"; }\n\n.fa-flash:before,\n.fa-bolt:before {\n  content: \"\"; }\n\n.fa-sitemap:before {\n  content: \"\"; }\n\n.fa-umbrella:before {\n  content: \"\"; }\n\n.fa-paste:before,\n.fa-clipboard:before {\n  content: \"\"; }\n\n.fa-lightbulb-o:before {\n  content: \"\"; }\n\n.fa-exchange:before {\n  content: \"\"; }\n\n.fa-cloud-download:before {\n  content: \"\"; }\n\n.fa-cloud-upload:before {\n  content: \"\"; }\n\n.fa-user-md:before {\n  content: \"\"; }\n\n.fa-stethoscope:before {\n  content: \"\"; }\n\n.fa-suitcase:before {\n  content: \"\"; }\n\n.fa-bell-o:before {\n  content: \"\"; }\n\n.fa-coffee:before {\n  content: \"\"; }\n\n.fa-cutlery:before {\n  content: \"\"; }\n\n.fa-file-text-o:before {\n  content: \"\"; }\n\n.fa-building-o:before {\n  content: \"\"; }\n\n.fa-hospital-o:before {\n  content: \"\"; }\n\n.fa-ambulance:before {\n  content: \"\"; }\n\n.fa-medkit:before {\n  content: \"\"; }\n\n.fa-fighter-jet:before {\n  content: \"\"; }\n\n.fa-beer:before {\n  content: \"\"; }\n\n.fa-h-square:before {\n  content: \"\"; }\n\n.fa-plus-square:before {\n  content: \"\"; }\n\n.fa-angle-double-left:before {\n  content: \"\"; }\n\n.fa-angle-double-right:before {\n  content: \"\"; }\n\n.fa-angle-double-up:before {\n  content: \"\"; }\n\n.fa-angle-double-down:before {\n  content: \"\"; }\n\n.fa-angle-left:before {\n  content: \"\"; }\n\n.fa-angle-right:before {\n  content: \"\"; }\n\n.fa-angle-up:before {\n  content: \"\"; }\n\n.fa-angle-down:before {\n  content: \"\"; }\n\n.fa-desktop:before {\n  content: \"\"; }\n\n.fa-laptop:before {\n  content: \"\"; }\n\n.fa-tablet:before {\n  content: \"\"; }\n\n.fa-mobile-phone:before,\n.fa-mobile:before {\n  content: \"\"; }\n\n.fa-circle-o:before {\n  content: \"\"; }\n\n.fa-quote-left:before {\n  content: \"\"; }\n\n.fa-quote-right:before {\n  content: \"\"; }\n\n.fa-spinner:before {\n  content: \"\"; }\n\n.fa-circle:before {\n  content: \"\"; }\n\n.fa-mail-reply:before,\n.fa-reply:before {\n  content: \"\"; }\n\n.fa-github-alt:before {\n  content: \"\"; }\n\n.fa-folder-o:before {\n  content: \"\"; }\n\n.fa-folder-open-o:before {\n  content: \"\"; }\n\n.fa-smile-o:before {\n  content: \"\"; }\n\n.fa-frown-o:before {\n  content: \"\"; }\n\n.fa-meh-o:before {\n  content: \"\"; }\n\n.fa-gamepad:before {\n  content: \"\"; }\n\n.fa-keyboard-o:before {\n  content: \"\"; }\n\n.fa-flag-o:before {\n  content: \"\"; }\n\n.fa-flag-checkered:before {\n  content: \"\"; }\n\n.fa-terminal:before {\n  content: \"\"; }\n\n.fa-code:before {\n  content: \"\"; }\n\n.fa-mail-reply-all:before,\n.fa-reply-all:before {\n  content: \"\"; }\n\n.fa-star-half-empty:before,\n.fa-star-half-full:before,\n.fa-star-half-o:before {\n  content: \"\"; }\n\n.fa-location-arrow:before {\n  content: \"\"; }\n\n.fa-crop:before {\n  content: \"\"; }\n\n.fa-code-fork:before {\n  content: \"\"; }\n\n.fa-unlink:before,\n.fa-chain-broken:before {\n  content: \"\"; }\n\n.fa-question:before {\n  content: \"\"; }\n\n.fa-info:before {\n  content: \"\"; }\n\n.fa-exclamation:before {\n  content: \"\"; }\n\n.fa-superscript:before {\n  content: \"\"; }\n\n.fa-subscript:before {\n  content: \"\"; }\n\n.fa-eraser:before {\n  content: \"\"; }\n\n.fa-puzzle-piece:before {\n  content: \"\"; }\n\n.fa-microphone:before {\n  content: \"\"; }\n\n.fa-microphone-slash:before {\n  content: \"\"; }\n\n.fa-shield:before {\n  content: \"\"; }\n\n.fa-calendar-o:before {\n  content: \"\"; }\n\n.fa-fire-extinguisher:before {\n  content: \"\"; }\n\n.fa-rocket:before {\n  content: \"\"; }\n\n.fa-maxcdn:before {\n  content: \"\"; }\n\n.fa-chevron-circle-left:before {\n  content: \"\"; }\n\n.fa-chevron-circle-right:before {\n  content: \"\"; }\n\n.fa-chevron-circle-up:before {\n  content: \"\"; }\n\n.fa-chevron-circle-down:before {\n  content: \"\"; }\n\n.fa-html5:before {\n  content: \"\"; }\n\n.fa-css3:before {\n  content: \"\"; }\n\n.fa-anchor:before {\n  content: \"\"; }\n\n.fa-unlock-alt:before {\n  content: \"\"; }\n\n.fa-bullseye:before {\n  content: \"\"; }\n\n.fa-ellipsis-h:before {\n  content: \"\"; }\n\n.fa-ellipsis-v:before {\n  content: \"\"; }\n\n.fa-rss-square:before {\n  content: \"\"; }\n\n.fa-play-circle:before {\n  content: \"\"; }\n\n.fa-ticket:before {\n  content: \"\"; }\n\n.fa-minus-square:before {\n  content: \"\"; }\n\n.fa-minus-square-o:before {\n  content: \"\"; }\n\n.fa-level-up:before {\n  content: \"\"; }\n\n.fa-level-down:before {\n  content: \"\"; }\n\n.fa-check-square:before {\n  content: \"\"; }\n\n.fa-pencil-square:before {\n  content: \"\"; }\n\n.fa-external-link-square:before {\n  content: \"\"; }\n\n.fa-share-square:before {\n  content: \"\"; }\n\n.fa-compass:before {\n  content: \"\"; }\n\n.fa-toggle-down:before,\n.fa-caret-square-o-down:before {\n  content: \"\"; }\n\n.fa-toggle-up:before,\n.fa-caret-square-o-up:before {\n  content: \"\"; }\n\n.fa-toggle-right:before,\n.fa-caret-square-o-right:before {\n  content: \"\"; }\n\n.fa-euro:before,\n.fa-eur:before {\n  content: \"\"; }\n\n.fa-gbp:before {\n  content: \"\"; }\n\n.fa-dollar:before,\n.fa-usd:before {\n  content: \"\"; }\n\n.fa-rupee:before,\n.fa-inr:before {\n  content: \"\"; }\n\n.fa-cny:before,\n.fa-rmb:before,\n.fa-yen:before,\n.fa-jpy:before {\n  content: \"\"; }\n\n.fa-ruble:before,\n.fa-rouble:before,\n.fa-rub:before {\n  content: \"\"; }\n\n.fa-won:before,\n.fa-krw:before {\n  content: \"\"; }\n\n.fa-bitcoin:before,\n.fa-btc:before {\n  content: \"\"; }\n\n.fa-file:before {\n  content: \"\"; }\n\n.fa-file-text:before {\n  content: \"\"; }\n\n.fa-sort-alpha-asc:before {\n  content: \"\"; }\n\n.fa-sort-alpha-desc:before {\n  content: \"\"; }\n\n.fa-sort-amount-asc:before {\n  content: \"\"; }\n\n.fa-sort-amount-desc:before {\n  content: \"\"; }\n\n.fa-sort-numeric-asc:before {\n  content: \"\"; }\n\n.fa-sort-numeric-desc:before {\n  content: \"\"; }\n\n.fa-thumbs-up:before {\n  content: \"\"; }\n\n.fa-thumbs-down:before {\n  content: \"\"; }\n\n.fa-youtube-square:before {\n  content: \"\"; }\n\n.fa-youtube:before {\n  content: \"\"; }\n\n.fa-xing:before {\n  content: \"\"; }\n\n.fa-xing-square:before {\n  content: \"\"; }\n\n.fa-youtube-play:before {\n  content: \"\"; }\n\n.fa-dropbox:before {\n  content: \"\"; }\n\n.fa-stack-overflow:before {\n  content: \"\"; }\n\n.fa-instagram:before {\n  content: \"\"; }\n\n.fa-flickr:before {\n  content: \"\"; }\n\n.fa-adn:before {\n  content: \"\"; }\n\n.fa-bitbucket:before {\n  content: \"\"; }\n\n.fa-bitbucket-square:before {\n  content: \"\"; }\n\n.fa-tumblr:before {\n  content: \"\"; }\n\n.fa-tumblr-square:before {\n  content: \"\"; }\n\n.fa-long-arrow-down:before {\n  content: \"\"; }\n\n.fa-long-arrow-up:before {\n  content: \"\"; }\n\n.fa-long-arrow-left:before {\n  content: \"\"; }\n\n.fa-long-arrow-right:before {\n  content: \"\"; }\n\n.fa-apple:before {\n  content: \"\"; }\n\n.fa-windows:before {\n  content: \"\"; }\n\n.fa-android:before {\n  content: \"\"; }\n\n.fa-linux:before {\n  content: \"\"; }\n\n.fa-dribbble:before {\n  content: \"\"; }\n\n.fa-skype:before {\n  content: \"\"; }\n\n.fa-foursquare:before {\n  content: \"\"; }\n\n.fa-trello:before {\n  content: \"\"; }\n\n.fa-female:before {\n  content: \"\"; }\n\n.fa-male:before {\n  content: \"\"; }\n\n.fa-gittip:before,\n.fa-gratipay:before {\n  content: \"\"; }\n\n.fa-sun-o:before {\n  content: \"\"; }\n\n.fa-moon-o:before {\n  content: \"\"; }\n\n.fa-archive:before {\n  content: \"\"; }\n\n.fa-bug:before {\n  content: \"\"; }\n\n.fa-vk:before {\n  content: \"\"; }\n\n.fa-weibo:before {\n  content: \"\"; }\n\n.fa-renren:before {\n  content: \"\"; }\n\n.fa-pagelines:before {\n  content: \"\"; }\n\n.fa-stack-exchange:before {\n  content: \"\"; }\n\n.fa-arrow-circle-o-right:before {\n  content: \"\"; }\n\n.fa-arrow-circle-o-left:before {\n  content: \"\"; }\n\n.fa-toggle-left:before,\n.fa-caret-square-o-left:before {\n  content: \"\"; }\n\n.fa-dot-circle-o:before {\n  content: \"\"; }\n\n.fa-wheelchair:before {\n  content: \"\"; }\n\n.fa-vimeo-square:before {\n  content: \"\"; }\n\n.fa-turkish-lira:before,\n.fa-try:before {\n  content: \"\"; }\n\n.fa-plus-square-o:before {\n  content: \"\"; }\n\n.fa-space-shuttle:before {\n  content: \"\"; }\n\n.fa-slack:before {\n  content: \"\"; }\n\n.fa-envelope-square:before {\n  content: \"\"; }\n\n.fa-wordpress:before {\n  content: \"\"; }\n\n.fa-openid:before {\n  content: \"\"; }\n\n.fa-institution:before,\n.fa-bank:before,\n.fa-university:before {\n  content: \"\"; }\n\n.fa-mortar-board:before,\n.fa-graduation-cap:before {\n  content: \"\"; }\n\n.fa-yahoo:before {\n  content: \"\"; }\n\n.fa-google:before {\n  content: \"\"; }\n\n.fa-reddit:before {\n  content: \"\"; }\n\n.fa-reddit-square:before {\n  content: \"\"; }\n\n.fa-stumbleupon-circle:before {\n  content: \"\"; }\n\n.fa-stumbleupon:before {\n  content: \"\"; }\n\n.fa-delicious:before {\n  content: \"\"; }\n\n.fa-digg:before {\n  content: \"\"; }\n\n.fa-pied-piper-pp:before {\n  content: \"\"; }\n\n.fa-pied-piper-alt:before {\n  content: \"\"; }\n\n.fa-drupal:before {\n  content: \"\"; }\n\n.fa-joomla:before {\n  content: \"\"; }\n\n.fa-language:before {\n  content: \"\"; }\n\n.fa-fax:before {\n  content: \"\"; }\n\n.fa-building:before {\n  content: \"\"; }\n\n.fa-child:before {\n  content: \"\"; }\n\n.fa-paw:before {\n  content: \"\"; }\n\n.fa-spoon:before {\n  content: \"\"; }\n\n.fa-cube:before {\n  content: \"\"; }\n\n.fa-cubes:before {\n  content: \"\"; }\n\n.fa-behance:before {\n  content: \"\"; }\n\n.fa-behance-square:before {\n  content: \"\"; }\n\n.fa-steam:before {\n  content: \"\"; }\n\n.fa-steam-square:before {\n  content: \"\"; }\n\n.fa-recycle:before {\n  content: \"\"; }\n\n.fa-automobile:before,\n.fa-car:before {\n  content: \"\"; }\n\n.fa-cab:before,\n.fa-taxi:before {\n  content: \"\"; }\n\n.fa-tree:before {\n  content: \"\"; }\n\n.fa-spotify:before {\n  content: \"\"; }\n\n.fa-deviantart:before {\n  content: \"\"; }\n\n.fa-soundcloud:before {\n  content: \"\"; }\n\n.fa-database:before {\n  content: \"\"; }\n\n.fa-file-pdf-o:before {\n  content: \"\"; }\n\n.fa-file-word-o:before {\n  content: \"\"; }\n\n.fa-file-excel-o:before {\n  content: \"\"; }\n\n.fa-file-powerpoint-o:before {\n  content: \"\"; }\n\n.fa-file-photo-o:before,\n.fa-file-picture-o:before,\n.fa-file-image-o:before {\n  content: \"\"; }\n\n.fa-file-zip-o:before,\n.fa-file-archive-o:before {\n  content: \"\"; }\n\n.fa-file-sound-o:before,\n.fa-file-audio-o:before {\n  content: \"\"; }\n\n.fa-file-movie-o:before,\n.fa-file-video-o:before {\n  content: \"\"; }\n\n.fa-file-code-o:before {\n  content: \"\"; }\n\n.fa-vine:before {\n  content: \"\"; }\n\n.fa-codepen:before {\n  content: \"\"; }\n\n.fa-jsfiddle:before {\n  content: \"\"; }\n\n.fa-life-bouy:before,\n.fa-life-buoy:before,\n.fa-life-saver:before,\n.fa-support:before,\n.fa-life-ring:before {\n  content: \"\"; }\n\n.fa-circle-o-notch:before {\n  content: \"\"; }\n\n.fa-ra:before,\n.fa-resistance:before,\n.fa-rebel:before {\n  content: \"\"; }\n\n.fa-ge:before,\n.fa-empire:before {\n  content: \"\"; }\n\n.fa-git-square:before {\n  content: \"\"; }\n\n.fa-git:before {\n  content: \"\"; }\n\n.fa-y-combinator-square:before,\n.fa-yc-square:before,\n.fa-hacker-news:before {\n  content: \"\"; }\n\n.fa-tencent-weibo:before {\n  content: \"\"; }\n\n.fa-qq:before {\n  content: \"\"; }\n\n.fa-wechat:before,\n.fa-weixin:before {\n  content: \"\"; }\n\n.fa-send:before,\n.fa-paper-plane:before {\n  content: \"\"; }\n\n.fa-send-o:before,\n.fa-paper-plane-o:before {\n  content: \"\"; }\n\n.fa-history:before {\n  content: \"\"; }\n\n.fa-circle-thin:before {\n  content: \"\"; }\n\n.fa-header:before {\n  content: \"\"; }\n\n.fa-paragraph:before {\n  content: \"\"; }\n\n.fa-sliders:before {\n  content: \"\"; }\n\n.fa-share-alt:before {\n  content: \"\"; }\n\n.fa-share-alt-square:before {\n  content: \"\"; }\n\n.fa-bomb:before {\n  content: \"\"; }\n\n.fa-soccer-ball-o:before,\n.fa-futbol-o:before {\n  content: \"\"; }\n\n.fa-tty:before {\n  content: \"\"; }\n\n.fa-binoculars:before {\n  content: \"\"; }\n\n.fa-plug:before {\n  content: \"\"; }\n\n.fa-slideshare:before {\n  content: \"\"; }\n\n.fa-twitch:before {\n  content: \"\"; }\n\n.fa-yelp:before {\n  content: \"\"; }\n\n.fa-newspaper-o:before {\n  content: \"\"; }\n\n.fa-wifi:before {\n  content: \"\"; }\n\n.fa-calculator:before {\n  content: \"\"; }\n\n.fa-paypal:before {\n  content: \"\"; }\n\n.fa-google-wallet:before {\n  content: \"\"; }\n\n.fa-cc-visa:before {\n  content: \"\"; }\n\n.fa-cc-mastercard:before {\n  content: \"\"; }\n\n.fa-cc-discover:before {\n  content: \"\"; }\n\n.fa-cc-amex:before {\n  content: \"\"; }\n\n.fa-cc-paypal:before {\n  content: \"\"; }\n\n.fa-cc-stripe:before {\n  content: \"\"; }\n\n.fa-bell-slash:before {\n  content: \"\"; }\n\n.fa-bell-slash-o:before {\n  content: \"\"; }\n\n.fa-trash:before {\n  content: \"\"; }\n\n.fa-copyright:before {\n  content: \"\"; }\n\n.fa-at:before {\n  content: \"\"; }\n\n.fa-eyedropper:before {\n  content: \"\"; }\n\n.fa-paint-brush:before {\n  content: \"\"; }\n\n.fa-birthday-cake:before {\n  content: \"\"; }\n\n.fa-area-chart:before {\n  content: \"\"; }\n\n.fa-pie-chart:before {\n  content: \"\"; }\n\n.fa-line-chart:before {\n  content: \"\"; }\n\n.fa-lastfm:before {\n  content: \"\"; }\n\n.fa-lastfm-square:before {\n  content: \"\"; }\n\n.fa-toggle-off:before {\n  content: \"\"; }\n\n.fa-toggle-on:before {\n  content: \"\"; }\n\n.fa-bicycle:before {\n  content: \"\"; }\n\n.fa-bus:before {\n  content: \"\"; }\n\n.fa-ioxhost:before {\n  content: \"\"; }\n\n.fa-angellist:before {\n  content: \"\"; }\n\n.fa-cc:before {\n  content: \"\"; }\n\n.fa-shekel:before,\n.fa-sheqel:before,\n.fa-ils:before {\n  content: \"\"; }\n\n.fa-meanpath:before {\n  content: \"\"; }\n\n.fa-buysellads:before {\n  content: \"\"; }\n\n.fa-connectdevelop:before {\n  content: \"\"; }\n\n.fa-dashcube:before {\n  content: \"\"; }\n\n.fa-forumbee:before {\n  content: \"\"; }\n\n.fa-leanpub:before {\n  content: \"\"; }\n\n.fa-sellsy:before {\n  content: \"\"; }\n\n.fa-shirtsinbulk:before {\n  content: \"\"; }\n\n.fa-simplybuilt:before {\n  content: \"\"; }\n\n.fa-skyatlas:before {\n  content: \"\"; }\n\n.fa-cart-plus:before {\n  content: \"\"; }\n\n.fa-cart-arrow-down:before {\n  content: \"\"; }\n\n.fa-diamond:before {\n  content: \"\"; }\n\n.fa-ship:before {\n  content: \"\"; }\n\n.fa-user-secret:before {\n  content: \"\"; }\n\n.fa-motorcycle:before {\n  content: \"\"; }\n\n.fa-street-view:before {\n  content: \"\"; }\n\n.fa-heartbeat:before {\n  content: \"\"; }\n\n.fa-venus:before {\n  content: \"\"; }\n\n.fa-mars:before {\n  content: \"\"; }\n\n.fa-mercury:before {\n  content: \"\"; }\n\n.fa-intersex:before,\n.fa-transgender:before {\n  content: \"\"; }\n\n.fa-transgender-alt:before {\n  content: \"\"; }\n\n.fa-venus-double:before {\n  content: \"\"; }\n\n.fa-mars-double:before {\n  content: \"\"; }\n\n.fa-venus-mars:before {\n  content: \"\"; }\n\n.fa-mars-stroke:before {\n  content: \"\"; }\n\n.fa-mars-stroke-v:before {\n  content: \"\"; }\n\n.fa-mars-stroke-h:before {\n  content: \"\"; }\n\n.fa-neuter:before {\n  content: \"\"; }\n\n.fa-genderless:before {\n  content: \"\"; }\n\n.fa-facebook-official:before {\n  content: \"\"; }\n\n.fa-pinterest-p:before {\n  content: \"\"; }\n\n.fa-whatsapp:before {\n  content: \"\"; }\n\n.fa-server:before {\n  content: \"\"; }\n\n.fa-user-plus:before {\n  content: \"\"; }\n\n.fa-user-times:before {\n  content: \"\"; }\n\n.fa-hotel:before,\n.fa-bed:before {\n  content: \"\"; }\n\n.fa-viacoin:before {\n  content: \"\"; }\n\n.fa-train:before {\n  content: \"\"; }\n\n.fa-subway:before {\n  content: \"\"; }\n\n.fa-medium:before {\n  content: \"\"; }\n\n.fa-yc:before,\n.fa-y-combinator:before {\n  content: \"\"; }\n\n.fa-optin-monster:before {\n  content: \"\"; }\n\n.fa-opencart:before {\n  content: \"\"; }\n\n.fa-expeditedssl:before {\n  content: \"\"; }\n\n.fa-battery-4:before,\n.fa-battery:before,\n.fa-battery-full:before {\n  content: \"\"; }\n\n.fa-battery-3:before,\n.fa-battery-three-quarters:before {\n  content: \"\"; }\n\n.fa-battery-2:before,\n.fa-battery-half:before {\n  content: \"\"; }\n\n.fa-battery-1:before,\n.fa-battery-quarter:before {\n  content: \"\"; }\n\n.fa-battery-0:before,\n.fa-battery-empty:before {\n  content: \"\"; }\n\n.fa-mouse-pointer:before {\n  content: \"\"; }\n\n.fa-i-cursor:before {\n  content: \"\"; }\n\n.fa-object-group:before {\n  content: \"\"; }\n\n.fa-object-ungroup:before {\n  content: \"\"; }\n\n.fa-sticky-note:before {\n  content: \"\"; }\n\n.fa-sticky-note-o:before {\n  content: \"\"; }\n\n.fa-cc-jcb:before {\n  content: \"\"; }\n\n.fa-cc-diners-club:before {\n  content: \"\"; }\n\n.fa-clone:before {\n  content: \"\"; }\n\n.fa-balance-scale:before {\n  content: \"\"; }\n\n.fa-hourglass-o:before {\n  content: \"\"; }\n\n.fa-hourglass-1:before,\n.fa-hourglass-start:before {\n  content: \"\"; }\n\n.fa-hourglass-2:before,\n.fa-hourglass-half:before {\n  content: \"\"; }\n\n.fa-hourglass-3:before,\n.fa-hourglass-end:before {\n  content: \"\"; }\n\n.fa-hourglass:before {\n  content: \"\"; }\n\n.fa-hand-grab-o:before,\n.fa-hand-rock-o:before {\n  content: \"\"; }\n\n.fa-hand-stop-o:before,\n.fa-hand-paper-o:before {\n  content: \"\"; }\n\n.fa-hand-scissors-o:before {\n  content: \"\"; }\n\n.fa-hand-lizard-o:before {\n  content: \"\"; }\n\n.fa-hand-spock-o:before {\n  content: \"\"; }\n\n.fa-hand-pointer-o:before {\n  content: \"\"; }\n\n.fa-hand-peace-o:before {\n  content: \"\"; }\n\n.fa-trademark:before {\n  content: \"\"; }\n\n.fa-registered:before {\n  content: \"\"; }\n\n.fa-creative-commons:before {\n  content: \"\"; }\n\n.fa-gg:before {\n  content: \"\"; }\n\n.fa-gg-circle:before {\n  content: \"\"; }\n\n.fa-tripadvisor:before {\n  content: \"\"; }\n\n.fa-odnoklassniki:before {\n  content: \"\"; }\n\n.fa-odnoklassniki-square:before {\n  content: \"\"; }\n\n.fa-get-pocket:before {\n  content: \"\"; }\n\n.fa-wikipedia-w:before {\n  content: \"\"; }\n\n.fa-safari:before {\n  content: \"\"; }\n\n.fa-chrome:before {\n  content: \"\"; }\n\n.fa-firefox:before {\n  content: \"\"; }\n\n.fa-opera:before {\n  content: \"\"; }\n\n.fa-internet-explorer:before {\n  content: \"\"; }\n\n.fa-tv:before,\n.fa-television:before {\n  content: \"\"; }\n\n.fa-contao:before {\n  content: \"\"; }\n\n.fa-500px:before {\n  content: \"\"; }\n\n.fa-amazon:before {\n  content: \"\"; }\n\n.fa-calendar-plus-o:before {\n  content: \"\"; }\n\n.fa-calendar-minus-o:before {\n  content: \"\"; }\n\n.fa-calendar-times-o:before {\n  content: \"\"; }\n\n.fa-calendar-check-o:before {\n  content: \"\"; }\n\n.fa-industry:before {\n  content: \"\"; }\n\n.fa-map-pin:before {\n  content: \"\"; }\n\n.fa-map-signs:before {\n  content: \"\"; }\n\n.fa-map-o:before {\n  content: \"\"; }\n\n.fa-map:before {\n  content: \"\"; }\n\n.fa-commenting:before {\n  content: \"\"; }\n\n.fa-commenting-o:before {\n  content: \"\"; }\n\n.fa-houzz:before {\n  content: \"\"; }\n\n.fa-vimeo:before {\n  content: \"\"; }\n\n.fa-black-tie:before {\n  content: \"\"; }\n\n.fa-fonticons:before {\n  content: \"\"; }\n\n.fa-reddit-alien:before {\n  content: \"\"; }\n\n.fa-edge:before {\n  content: \"\"; }\n\n.fa-credit-card-alt:before {\n  content: \"\"; }\n\n.fa-codiepie:before {\n  content: \"\"; }\n\n.fa-modx:before {\n  content: \"\"; }\n\n.fa-fort-awesome:before {\n  content: \"\"; }\n\n.fa-usb:before {\n  content: \"\"; }\n\n.fa-product-hunt:before {\n  content: \"\"; }\n\n.fa-mixcloud:before {\n  content: \"\"; }\n\n.fa-scribd:before {\n  content: \"\"; }\n\n.fa-pause-circle:before {\n  content: \"\"; }\n\n.fa-pause-circle-o:before {\n  content: \"\"; }\n\n.fa-stop-circle:before {\n  content: \"\"; }\n\n.fa-stop-circle-o:before {\n  content: \"\"; }\n\n.fa-shopping-bag:before {\n  content: \"\"; }\n\n.fa-shopping-basket:before {\n  content: \"\"; }\n\n.fa-hashtag:before {\n  content: \"\"; }\n\n.fa-bluetooth:before {\n  content: \"\"; }\n\n.fa-bluetooth-b:before {\n  content: \"\"; }\n\n.fa-percent:before {\n  content: \"\"; }\n\n.fa-gitlab:before {\n  content: \"\"; }\n\n.fa-wpbeginner:before {\n  content: \"\"; }\n\n.fa-wpforms:before {\n  content: \"\"; }\n\n.fa-envira:before {\n  content: \"\"; }\n\n.fa-universal-access:before {\n  content: \"\"; }\n\n.fa-wheelchair-alt:before {\n  content: \"\"; }\n\n.fa-question-circle-o:before {\n  content: \"\"; }\n\n.fa-blind:before {\n  content: \"\"; }\n\n.fa-audio-description:before {\n  content: \"\"; }\n\n.fa-volume-control-phone:before {\n  content: \"\"; }\n\n.fa-braille:before {\n  content: \"\"; }\n\n.fa-assistive-listening-systems:before {\n  content: \"\"; }\n\n.fa-asl-interpreting:before,\n.fa-american-sign-language-interpreting:before {\n  content: \"\"; }\n\n.fa-deafness:before,\n.fa-hard-of-hearing:before,\n.fa-deaf:before {\n  content: \"\"; }\n\n.fa-glide:before {\n  content: \"\"; }\n\n.fa-glide-g:before {\n  content: \"\"; }\n\n.fa-signing:before,\n.fa-sign-language:before {\n  content: \"\"; }\n\n.fa-low-vision:before {\n  content: \"\"; }\n\n.fa-viadeo:before {\n  content: \"\"; }\n\n.fa-viadeo-square:before {\n  content: \"\"; }\n\n.fa-snapchat:before {\n  content: \"\"; }\n\n.fa-snapchat-ghost:before {\n  content: \"\"; }\n\n.fa-snapchat-square:before {\n  content: \"\"; }\n\n.fa-pied-piper:before {\n  content: \"\"; }\n\n.fa-first-order:before {\n  content: \"\"; }\n\n.fa-yoast:before {\n  content: \"\"; }\n\n.fa-themeisle:before {\n  content: \"\"; }\n\n.fa-google-plus-circle:before,\n.fa-google-plus-official:before {\n  content: \"\"; }\n\n.fa-fa:before,\n.fa-font-awesome:before {\n  content: \"\"; }\n\n.fa-handshake-o:before {\n  content: \"\"; }\n\n.fa-envelope-open:before {\n  content: \"\"; }\n\n.fa-envelope-open-o:before {\n  content: \"\"; }\n\n.fa-linode:before {\n  content: \"\"; }\n\n.fa-address-book:before {\n  content: \"\"; }\n\n.fa-address-book-o:before {\n  content: \"\"; }\n\n.fa-vcard:before,\n.fa-address-card:before {\n  content: \"\"; }\n\n.fa-vcard-o:before,\n.fa-address-card-o:before {\n  content: \"\"; }\n\n.fa-user-circle:before {\n  content: \"\"; }\n\n.fa-user-circle-o:before {\n  content: \"\"; }\n\n.fa-user-o:before {\n  content: \"\"; }\n\n.fa-id-badge:before {\n  content: \"\"; }\n\n.fa-drivers-license:before,\n.fa-id-card:before {\n  content: \"\"; }\n\n.fa-drivers-license-o:before,\n.fa-id-card-o:before {\n  content: \"\"; }\n\n.fa-quora:before {\n  content: \"\"; }\n\n.fa-free-code-camp:before {\n  content: \"\"; }\n\n.fa-telegram:before {\n  content: \"\"; }\n\n.fa-thermometer-4:before,\n.fa-thermometer:before,\n.fa-thermometer-full:before {\n  content: \"\"; }\n\n.fa-thermometer-3:before,\n.fa-thermometer-three-quarters:before {\n  content: \"\"; }\n\n.fa-thermometer-2:before,\n.fa-thermometer-half:before {\n  content: \"\"; }\n\n.fa-thermometer-1:before,\n.fa-thermometer-quarter:before {\n  content: \"\"; }\n\n.fa-thermometer-0:before,\n.fa-thermometer-empty:before {\n  content: \"\"; }\n\n.fa-shower:before {\n  content: \"\"; }\n\n.fa-bathtub:before,\n.fa-s15:before,\n.fa-bath:before {\n  content: \"\"; }\n\n.fa-podcast:before {\n  content: \"\"; }\n\n.fa-window-maximize:before {\n  content: \"\"; }\n\n.fa-window-minimize:before {\n  content: \"\"; }\n\n.fa-window-restore:before {\n  content: \"\"; }\n\n.fa-times-rectangle:before,\n.fa-window-close:before {\n  content: \"\"; }\n\n.fa-times-rectangle-o:before,\n.fa-window-close-o:before {\n  content: \"\"; }\n\n.fa-bandcamp:before {\n  content: \"\"; }\n\n.fa-grav:before {\n  content: \"\"; }\n\n.fa-etsy:before {\n  content: \"\"; }\n\n.fa-imdb:before {\n  content: \"\"; }\n\n.fa-ravelry:before {\n  content: \"\"; }\n\n.fa-eercast:before {\n  content: \"\"; }\n\n.fa-microchip:before {\n  content: \"\"; }\n\n.fa-snowflake-o:before {\n  content: \"\"; }\n\n.fa-superpowers:before {\n  content: \"\"; }\n\n.fa-wpexplorer:before {\n  content: \"\"; }\n\n.fa-meetup:before {\n  content: \"\"; }\n\n.sr-only {\n  position: absolute;\n  width: 1px;\n  height: 1px;\n  padding: 0;\n  margin: -1px;\n  overflow: hidden;\n  clip: rect(0, 0, 0, 0);\n  border: 0; }\n\n.sr-only-focusable:active, .sr-only-focusable:focus {\n  position: static;\n  width: auto;\n  height: auto;\n  margin: 0;\n  overflow: visible;\n  clip: auto; }\n\n@font-face {\n  font-family: \"FontAwesome\";\n  font-style: normal;\n  font-weight: normal;\n  src: url(\"fonts/font-awesome/fontawesome-webfont.eot?#iefix\") format(\"embedded-opentype\"), url(\"fonts/font-awesome/fontawesome-webfont.woff2\") format(\"woff2\"), url(\"fonts/font-awesome/fontawesome-webfont.woff\") format(\"woff\"), url(\"fonts/font-awesome/fontawesome-webfont.ttf\") format(\"truetype\"), url(\"fonts/font-awesome/fontawesome-webfont.svg#FontAwesome\") format(\"svg\"); }\n\n@font-face {\n  font-family: \"Roboto-Regular\";\n  font-style: normal;\n  font-weight: normal;\n  src: url(\"fonts/Roboto/Roboto-Regular.eot?#iefix\") format(\"embedded-opentype\"), url(\"fonts/Roboto/Roboto-Regular.woff2\") format(\"woff2\"), url(\"fonts/Roboto/Roboto-Regular.woff\") format(\"woff\"), url(\"fonts/Roboto/Roboto-Regular.ttf\") format(\"truetype\"), url(\"fonts/Roboto/Roboto-Regular.svg#Roboto-Regular\") format(\"svg\"); }\n\n@font-face {\n  font-family: \"Roboto-Medium\";\n  font-style: normal;\n  font-weight: normal;\n  src: url(\"fonts/Roboto/Roboto-Medium.eot?#iefix\") format(\"embedded-opentype\"), url(\"fonts/Roboto/Roboto-Medium.woff2\") format(\"woff2\"), url(\"fonts/Roboto/Roboto-Medium.woff\") format(\"woff\"), url(\"fonts/Roboto/Roboto-Medium.ttf\") format(\"truetype\"), url(\"fonts/Roboto/Roboto-Medium.svg#Roboto-Medium\") format(\"svg\"); }\n\n@font-face {\n  font-family: \"Roboto-Light\";\n  font-style: normal;\n  font-weight: normal;\n  src: url(\"fonts/Roboto/Roboto-Light.eot?#iefix\") format(\"embedded-opentype\"), url(\"fonts/Roboto/Roboto-Light.woff2\") format(\"woff2\"), url(\"fonts/Roboto/Roboto-Light.woff\") format(\"woff\"), url(\"fonts/Roboto/Roboto-Light.ttf\") format(\"truetype\"), url(\"fonts/Roboto/Roboto-Light.svg#Roboto-Light\") format(\"svg\"); }\n\n@font-face {\n  font-family: \"Roboto-Italic\";\n  font-style: normal;\n  font-weight: normal;\n  src: url(\"fonts/Roboto/Roboto-Italic.eot?#iefix\") format(\"embedded-opentype\"), url(\"fonts/Roboto/Roboto-Italic.woff2\") format(\"woff2\"), url(\"fonts/Roboto/Roboto-Italic.woff\") format(\"woff\"), url(\"fonts/Roboto/Roboto-Italic.ttf\") format(\"truetype\"), url(\"fonts/Roboto/Roboto-Italic.svg#Roboto-Italic\") format(\"svg\"); }\n\n@font-face {\n  font-family: \"Roboto-Black\";\n  font-style: normal;\n  font-weight: normal;\n  src: url(\"fonts/Roboto/Roboto-Black.eot?#iefix\") format(\"embedded-opentype\"), url(\"fonts/Roboto/Roboto-Black.woff2\") format(\"woff2\"), url(\"fonts/Roboto/Roboto-Black.woff\") format(\"woff\"), url(\"fonts/Roboto/Roboto-Black.ttf\") format(\"truetype\"), url(\"fonts/Roboto/Roboto-Black.svg#Roboto-Black\") format(\"svg\"); }\n\n@font-face {\n  font-family: \"Roboto-Bold\";\n  font-style: normal;\n  font-weight: normal;\n  src: url(\"fonts/Roboto/Roboto-Bold.eot?#iefix\") format(\"embedded-opentype\"), url(\"fonts/Roboto/Roboto-Bold.woff2\") format(\"woff2\"), url(\"fonts/Roboto/Roboto-Bold.woff\") format(\"woff\"), url(\"fonts/Roboto/Roboto-Bold.ttf\") format(\"truetype\"), url(\"fonts/Roboto/Roboto-Bold.svg#Roboto-Bold\") format(\"svg\"); }\n\n@font-face {\n  font-family: \"Roboto-Thin\";\n  font-style: normal;\n  font-weight: normal;\n  src: url(\"fonts/Roboto/Roboto-Thin.eot?#iefix\") format(\"embedded-opentype\"), url(\"fonts/Roboto/Roboto-Thin.woff2\") format(\"woff2\"), url(\"fonts/Roboto/Roboto-Thin.woff\") format(\"woff\"), url(\"fonts/Roboto/Roboto-Thin.ttf\") format(\"truetype\"), url(\"fonts/Roboto/Roboto-Thin.svg#Roboto-Thin\") format(\"svg\"); }\n\nbody, html, input {\n  font-family: Roboto-Regular; }\n\n* {\n  padding: 0;\n  margin: 0; }\n"
 
 /***/ },
-/* 26 */
+/* 33 */
 /***/ function(module, exports, __webpack_require__) {
 
 	"use strict";
@@ -35423,7 +39464,7 @@
 	var __metadata = (this && this.__metadata) || function (k, v) {
 	    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 	};
-	var core_1 = __webpack_require__(3);
+	var core_1 = __webpack_require__(10);
 	var HeaderComponent = (function () {
 	    function HeaderComponent() {
 	    }
@@ -35432,8 +39473,8 @@
 	HeaderComponent = __decorate([
 	    core_1.Component({
 	        selector: 'header-component',
-	        template: __webpack_require__(27),
-	        styles: [__webpack_require__(28)]
+	        template: __webpack_require__(34),
+	        styles: [__webpack_require__(35)]
 	    }),
 	    __metadata("design:paramtypes", [])
 	], HeaderComponent);
@@ -35441,4035 +39482,6061 @@
 
 
 /***/ },
-/* 27 */
-/***/ function(module, exports) {
-
-	module.exports = "<div class=\"header row center-xs\"><div class=\"header__offset row\"><div class=\"col-xs-3 row start-xs middle-xs\"><img src=\"images/logo.png\" alt=\"Hmm...\" class=\"header__logo\"></div><div class=\"col-xs-6 row start-xs middle-xs\"><i aria-hidden=\"true\" class=\"header__search-icon fa fa-search\"></i><input type=\"text\" placeholder=\"Search...\" class=\"header__search-bar\"><a href=\"#\" class=\"header__action-buttons\"><i aria-hidden=\"true\" class=\"fa fa-bell\"></i></a><a href=\"#\" class=\"header__action-buttons\"><i aria-hidden=\"true\" class=\"fa fa-music\"></i></a></div><div class=\"col-xs-3 row end-xs\"><a href=\"#\" class=\"header__profile-button\"><strong class=\"header__user-name\">Oleg</strong><img src=\"http://placehold.it/50x50\" alt=\"Avatar\" class=\"header__avatar\"></a></div></div></div>"
-
-/***/ },
-/* 28 */
-/***/ function(module, exports) {
-
-	module.exports = ".header {\n  background-color: #F57F62;\n  height: 60px;\n  width: 100%;\n  margin: 0 !important; }\n\n.header__offset {\n  height: 100%;\n  width: 1000px; }\n\n.header__logo {\n  height: 18px; }\n\n.header__search-icon {\n  font-size: 23px;\n  color: white; }\n\n.header__search-bar {\n  border: none;\n  border-radius: 100px;\n  height: 35px;\n  margin: 0 10px 0 10px;\n  color: white;\n  padding-left: 15px;\n  background-color: #F5937A; }\n\n.header__search-bar::-webkit-input-placeholder {\n  color: white; }\n\n.header__search-bar:focus {\n  background-color: white;\n  color: #F5937A;\n  outline: none; }\n\n.header__action-buttons {\n  margin-left: 10px;\n  color: white;\n  font-size: 23px;\n  height: 100%;\n  line-height: 60px;\n  width: 60px;\n  text-align: center; }\n\n.header__action-buttons:hover {\n  background-color: #F5937A; }\n\n.header__profile-button {\n  padding: 0 10px; }\n\n.header__profile-button:hover {\n  background-color: #F5937A; }\n"
-
-/***/ },
-/* 29 */
-/***/ function(module, exports, __webpack_require__) {
-
-	/* WEBPACK VAR INJECTION */(function(process) {// Copyright Joyent, Inc. and other Node contributors.
-	//
-	// Permission is hereby granted, free of charge, to any person obtaining a
-	// copy of this software and associated documentation files (the
-	// "Software"), to deal in the Software without restriction, including
-	// without limitation the rights to use, copy, modify, merge, publish,
-	// distribute, sublicense, and/or sell copies of the Software, and to permit
-	// persons to whom the Software is furnished to do so, subject to the
-	// following conditions:
-	//
-	// The above copyright notice and this permission notice shall be included
-	// in all copies or substantial portions of the Software.
-	//
-	// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-	// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-	// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-	// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-	// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-	// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-	// USE OR OTHER DEALINGS IN THE SOFTWARE.
-	
-	'use strict';
-	
-	
-	var isWindows = process.platform === 'win32';
-	var util = __webpack_require__(31);
-	
-	
-	// resolves . and .. elements in a path array with directory names there
-	// must be no slashes or device names (c:\) in the array
-	// (so also no leading and trailing slashes - it does not distinguish
-	// relative and absolute paths)
-	function normalizeArray(parts, allowAboveRoot) {
-	  var res = [];
-	  for (var i = 0; i < parts.length; i++) {
-	    var p = parts[i];
-	
-	    // ignore empty parts
-	    if (!p || p === '.')
-	      continue;
-	
-	    if (p === '..') {
-	      if (res.length && res[res.length - 1] !== '..') {
-	        res.pop();
-	      } else if (allowAboveRoot) {
-	        res.push('..');
-	      }
-	    } else {
-	      res.push(p);
-	    }
-	  }
-	
-	  return res;
-	}
-	
-	// returns an array with empty elements removed from either end of the input
-	// array or the original array if no elements need to be removed
-	function trimArray(arr) {
-	  var lastIndex = arr.length - 1;
-	  var start = 0;
-	  for (; start <= lastIndex; start++) {
-	    if (arr[start])
-	      break;
-	  }
-	
-	  var end = lastIndex;
-	  for (; end >= 0; end--) {
-	    if (arr[end])
-	      break;
-	  }
-	
-	  if (start === 0 && end === lastIndex)
-	    return arr;
-	  if (start > end)
-	    return [];
-	  return arr.slice(start, end + 1);
-	}
-	
-	// Regex to split a windows path into three parts: [*, device, slash,
-	// tail] windows-only
-	var splitDeviceRe =
-	    /^([a-zA-Z]:|[\\\/]{2}[^\\\/]+[\\\/]+[^\\\/]+)?([\\\/])?([\s\S]*?)$/;
-	
-	// Regex to split the tail part of the above into [*, dir, basename, ext]
-	var splitTailRe =
-	    /^([\s\S]*?)((?:\.{1,2}|[^\\\/]+?|)(\.[^.\/\\]*|))(?:[\\\/]*)$/;
-	
-	var win32 = {};
-	
-	// Function to split a filename into [root, dir, basename, ext]
-	function win32SplitPath(filename) {
-	  // Separate device+slash from tail
-	  var result = splitDeviceRe.exec(filename),
-	      device = (result[1] || '') + (result[2] || ''),
-	      tail = result[3] || '';
-	  // Split the tail into dir, basename and extension
-	  var result2 = splitTailRe.exec(tail),
-	      dir = result2[1],
-	      basename = result2[2],
-	      ext = result2[3];
-	  return [device, dir, basename, ext];
-	}
-	
-	function win32StatPath(path) {
-	  var result = splitDeviceRe.exec(path),
-	      device = result[1] || '',
-	      isUnc = !!device && device[1] !== ':';
-	  return {
-	    device: device,
-	    isUnc: isUnc,
-	    isAbsolute: isUnc || !!result[2], // UNC paths are always absolute
-	    tail: result[3]
-	  };
-	}
-	
-	function normalizeUNCRoot(device) {
-	  return '\\\\' + device.replace(/^[\\\/]+/, '').replace(/[\\\/]+/g, '\\');
-	}
-	
-	// path.resolve([from ...], to)
-	win32.resolve = function() {
-	  var resolvedDevice = '',
-	      resolvedTail = '',
-	      resolvedAbsolute = false;
-	
-	  for (var i = arguments.length - 1; i >= -1; i--) {
-	    var path;
-	    if (i >= 0) {
-	      path = arguments[i];
-	    } else if (!resolvedDevice) {
-	      path = process.cwd();
-	    } else {
-	      // Windows has the concept of drive-specific current working
-	      // directories. If we've resolved a drive letter but not yet an
-	      // absolute path, get cwd for that drive. We're sure the device is not
-	      // an unc path at this points, because unc paths are always absolute.
-	      path = process.env['=' + resolvedDevice];
-	      // Verify that a drive-local cwd was found and that it actually points
-	      // to our drive. If not, default to the drive's root.
-	      if (!path || path.substr(0, 3).toLowerCase() !==
-	          resolvedDevice.toLowerCase() + '\\') {
-	        path = resolvedDevice + '\\';
-	      }
-	    }
-	
-	    // Skip empty and invalid entries
-	    if (!util.isString(path)) {
-	      throw new TypeError('Arguments to path.resolve must be strings');
-	    } else if (!path) {
-	      continue;
-	    }
-	
-	    var result = win32StatPath(path),
-	        device = result.device,
-	        isUnc = result.isUnc,
-	        isAbsolute = result.isAbsolute,
-	        tail = result.tail;
-	
-	    if (device &&
-	        resolvedDevice &&
-	        device.toLowerCase() !== resolvedDevice.toLowerCase()) {
-	      // This path points to another device so it is not applicable
-	      continue;
-	    }
-	
-	    if (!resolvedDevice) {
-	      resolvedDevice = device;
-	    }
-	    if (!resolvedAbsolute) {
-	      resolvedTail = tail + '\\' + resolvedTail;
-	      resolvedAbsolute = isAbsolute;
-	    }
-	
-	    if (resolvedDevice && resolvedAbsolute) {
-	      break;
-	    }
-	  }
-	
-	  // Convert slashes to backslashes when `resolvedDevice` points to an UNC
-	  // root. Also squash multiple slashes into a single one where appropriate.
-	  if (isUnc) {
-	    resolvedDevice = normalizeUNCRoot(resolvedDevice);
-	  }
-	
-	  // At this point the path should be resolved to a full absolute path,
-	  // but handle relative paths to be safe (might happen when process.cwd()
-	  // fails)
-	
-	  // Normalize the tail path
-	  resolvedTail = normalizeArray(resolvedTail.split(/[\\\/]+/),
-	                                !resolvedAbsolute).join('\\');
-	
-	  return (resolvedDevice + (resolvedAbsolute ? '\\' : '') + resolvedTail) ||
-	         '.';
-	};
-	
-	
-	win32.normalize = function(path) {
-	  var result = win32StatPath(path),
-	      device = result.device,
-	      isUnc = result.isUnc,
-	      isAbsolute = result.isAbsolute,
-	      tail = result.tail,
-	      trailingSlash = /[\\\/]$/.test(tail);
-	
-	  // Normalize the tail path
-	  tail = normalizeArray(tail.split(/[\\\/]+/), !isAbsolute).join('\\');
-	
-	  if (!tail && !isAbsolute) {
-	    tail = '.';
-	  }
-	  if (tail && trailingSlash) {
-	    tail += '\\';
-	  }
-	
-	  // Convert slashes to backslashes when `device` points to an UNC root.
-	  // Also squash multiple slashes into a single one where appropriate.
-	  if (isUnc) {
-	    device = normalizeUNCRoot(device);
-	  }
-	
-	  return device + (isAbsolute ? '\\' : '') + tail;
-	};
-	
-	
-	win32.isAbsolute = function(path) {
-	  return win32StatPath(path).isAbsolute;
-	};
-	
-	win32.join = function() {
-	  var paths = [];
-	  for (var i = 0; i < arguments.length; i++) {
-	    var arg = arguments[i];
-	    if (!util.isString(arg)) {
-	      throw new TypeError('Arguments to path.join must be strings');
-	    }
-	    if (arg) {
-	      paths.push(arg);
-	    }
-	  }
-	
-	  var joined = paths.join('\\');
-	
-	  // Make sure that the joined path doesn't start with two slashes, because
-	  // normalize() will mistake it for an UNC path then.
-	  //
-	  // This step is skipped when it is very clear that the user actually
-	  // intended to point at an UNC path. This is assumed when the first
-	  // non-empty string arguments starts with exactly two slashes followed by
-	  // at least one more non-slash character.
-	  //
-	  // Note that for normalize() to treat a path as an UNC path it needs to
-	  // have at least 2 components, so we don't filter for that here.
-	  // This means that the user can use join to construct UNC paths from
-	  // a server name and a share name; for example:
-	  //   path.join('//server', 'share') -> '\\\\server\\share\')
-	  if (!/^[\\\/]{2}[^\\\/]/.test(paths[0])) {
-	    joined = joined.replace(/^[\\\/]{2,}/, '\\');
-	  }
-	
-	  return win32.normalize(joined);
-	};
-	
-	
-	// path.relative(from, to)
-	// it will solve the relative path from 'from' to 'to', for instance:
-	// from = 'C:\\orandea\\test\\aaa'
-	// to = 'C:\\orandea\\impl\\bbb'
-	// The output of the function should be: '..\\..\\impl\\bbb'
-	win32.relative = function(from, to) {
-	  from = win32.resolve(from);
-	  to = win32.resolve(to);
-	
-	  // windows is not case sensitive
-	  var lowerFrom = from.toLowerCase();
-	  var lowerTo = to.toLowerCase();
-	
-	  var toParts = trimArray(to.split('\\'));
-	
-	  var lowerFromParts = trimArray(lowerFrom.split('\\'));
-	  var lowerToParts = trimArray(lowerTo.split('\\'));
-	
-	  var length = Math.min(lowerFromParts.length, lowerToParts.length);
-	  var samePartsLength = length;
-	  for (var i = 0; i < length; i++) {
-	    if (lowerFromParts[i] !== lowerToParts[i]) {
-	      samePartsLength = i;
-	      break;
-	    }
-	  }
-	
-	  if (samePartsLength == 0) {
-	    return to;
-	  }
-	
-	  var outputParts = [];
-	  for (var i = samePartsLength; i < lowerFromParts.length; i++) {
-	    outputParts.push('..');
-	  }
-	
-	  outputParts = outputParts.concat(toParts.slice(samePartsLength));
-	
-	  return outputParts.join('\\');
-	};
-	
-	
-	win32._makeLong = function(path) {
-	  // Note: this will *probably* throw somewhere.
-	  if (!util.isString(path))
-	    return path;
-	
-	  if (!path) {
-	    return '';
-	  }
-	
-	  var resolvedPath = win32.resolve(path);
-	
-	  if (/^[a-zA-Z]\:\\/.test(resolvedPath)) {
-	    // path is local filesystem path, which needs to be converted
-	    // to long UNC path.
-	    return '\\\\?\\' + resolvedPath;
-	  } else if (/^\\\\[^?.]/.test(resolvedPath)) {
-	    // path is network UNC path, which needs to be converted
-	    // to long UNC path.
-	    return '\\\\?\\UNC\\' + resolvedPath.substring(2);
-	  }
-	
-	  return path;
-	};
-	
-	
-	win32.dirname = function(path) {
-	  var result = win32SplitPath(path),
-	      root = result[0],
-	      dir = result[1];
-	
-	  if (!root && !dir) {
-	    // No dirname whatsoever
-	    return '.';
-	  }
-	
-	  if (dir) {
-	    // It has a dirname, strip trailing slash
-	    dir = dir.substr(0, dir.length - 1);
-	  }
-	
-	  return root + dir;
-	};
-	
-	
-	win32.basename = function(path, ext) {
-	  var f = win32SplitPath(path)[2];
-	  // TODO: make this comparison case-insensitive on windows?
-	  if (ext && f.substr(-1 * ext.length) === ext) {
-	    f = f.substr(0, f.length - ext.length);
-	  }
-	  return f;
-	};
-	
-	
-	win32.extname = function(path) {
-	  return win32SplitPath(path)[3];
-	};
-	
-	
-	win32.format = function(pathObject) {
-	  if (!util.isObject(pathObject)) {
-	    throw new TypeError(
-	        "Parameter 'pathObject' must be an object, not " + typeof pathObject
-	    );
-	  }
-	
-	  var root = pathObject.root || '';
-	
-	  if (!util.isString(root)) {
-	    throw new TypeError(
-	        "'pathObject.root' must be a string or undefined, not " +
-	        typeof pathObject.root
-	    );
-	  }
-	
-	  var dir = pathObject.dir;
-	  var base = pathObject.base || '';
-	  if (!dir) {
-	    return base;
-	  }
-	  if (dir[dir.length - 1] === win32.sep) {
-	    return dir + base;
-	  }
-	  return dir + win32.sep + base;
-	};
-	
-	
-	win32.parse = function(pathString) {
-	  if (!util.isString(pathString)) {
-	    throw new TypeError(
-	        "Parameter 'pathString' must be a string, not " + typeof pathString
-	    );
-	  }
-	  var allParts = win32SplitPath(pathString);
-	  if (!allParts || allParts.length !== 4) {
-	    throw new TypeError("Invalid path '" + pathString + "'");
-	  }
-	  return {
-	    root: allParts[0],
-	    dir: allParts[0] + allParts[1].slice(0, -1),
-	    base: allParts[2],
-	    ext: allParts[3],
-	    name: allParts[2].slice(0, allParts[2].length - allParts[3].length)
-	  };
-	};
-	
-	
-	win32.sep = '\\';
-	win32.delimiter = ';';
-	
-	
-	// Split a filename into [root, dir, basename, ext], unix version
-	// 'root' is just a slash, or nothing.
-	var splitPathRe =
-	    /^(\/?|)([\s\S]*?)((?:\.{1,2}|[^\/]+?|)(\.[^.\/]*|))(?:[\/]*)$/;
-	var posix = {};
-	
-	
-	function posixSplitPath(filename) {
-	  return splitPathRe.exec(filename).slice(1);
-	}
-	
-	
-	// path.resolve([from ...], to)
-	// posix version
-	posix.resolve = function() {
-	  var resolvedPath = '',
-	      resolvedAbsolute = false;
-	
-	  for (var i = arguments.length - 1; i >= -1 && !resolvedAbsolute; i--) {
-	    var path = (i >= 0) ? arguments[i] : process.cwd();
-	
-	    // Skip empty and invalid entries
-	    if (!util.isString(path)) {
-	      throw new TypeError('Arguments to path.resolve must be strings');
-	    } else if (!path) {
-	      continue;
-	    }
-	
-	    resolvedPath = path + '/' + resolvedPath;
-	    resolvedAbsolute = path[0] === '/';
-	  }
-	
-	  // At this point the path should be resolved to a full absolute path, but
-	  // handle relative paths to be safe (might happen when process.cwd() fails)
-	
-	  // Normalize the path
-	  resolvedPath = normalizeArray(resolvedPath.split('/'),
-	                                !resolvedAbsolute).join('/');
-	
-	  return ((resolvedAbsolute ? '/' : '') + resolvedPath) || '.';
-	};
-	
-	// path.normalize(path)
-	// posix version
-	posix.normalize = function(path) {
-	  var isAbsolute = posix.isAbsolute(path),
-	      trailingSlash = path && path[path.length - 1] === '/';
-	
-	  // Normalize the path
-	  path = normalizeArray(path.split('/'), !isAbsolute).join('/');
-	
-	  if (!path && !isAbsolute) {
-	    path = '.';
-	  }
-	  if (path && trailingSlash) {
-	    path += '/';
-	  }
-	
-	  return (isAbsolute ? '/' : '') + path;
-	};
-	
-	// posix version
-	posix.isAbsolute = function(path) {
-	  return path.charAt(0) === '/';
-	};
-	
-	// posix version
-	posix.join = function() {
-	  var path = '';
-	  for (var i = 0; i < arguments.length; i++) {
-	    var segment = arguments[i];
-	    if (!util.isString(segment)) {
-	      throw new TypeError('Arguments to path.join must be strings');
-	    }
-	    if (segment) {
-	      if (!path) {
-	        path += segment;
-	      } else {
-	        path += '/' + segment;
-	      }
-	    }
-	  }
-	  return posix.normalize(path);
-	};
-	
-	
-	// path.relative(from, to)
-	// posix version
-	posix.relative = function(from, to) {
-	  from = posix.resolve(from).substr(1);
-	  to = posix.resolve(to).substr(1);
-	
-	  var fromParts = trimArray(from.split('/'));
-	  var toParts = trimArray(to.split('/'));
-	
-	  var length = Math.min(fromParts.length, toParts.length);
-	  var samePartsLength = length;
-	  for (var i = 0; i < length; i++) {
-	    if (fromParts[i] !== toParts[i]) {
-	      samePartsLength = i;
-	      break;
-	    }
-	  }
-	
-	  var outputParts = [];
-	  for (var i = samePartsLength; i < fromParts.length; i++) {
-	    outputParts.push('..');
-	  }
-	
-	  outputParts = outputParts.concat(toParts.slice(samePartsLength));
-	
-	  return outputParts.join('/');
-	};
-	
-	
-	posix._makeLong = function(path) {
-	  return path;
-	};
-	
-	
-	posix.dirname = function(path) {
-	  var result = posixSplitPath(path),
-	      root = result[0],
-	      dir = result[1];
-	
-	  if (!root && !dir) {
-	    // No dirname whatsoever
-	    return '.';
-	  }
-	
-	  if (dir) {
-	    // It has a dirname, strip trailing slash
-	    dir = dir.substr(0, dir.length - 1);
-	  }
-	
-	  return root + dir;
-	};
-	
-	
-	posix.basename = function(path, ext) {
-	  var f = posixSplitPath(path)[2];
-	  // TODO: make this comparison case-insensitive on windows?
-	  if (ext && f.substr(-1 * ext.length) === ext) {
-	    f = f.substr(0, f.length - ext.length);
-	  }
-	  return f;
-	};
-	
-	
-	posix.extname = function(path) {
-	  return posixSplitPath(path)[3];
-	};
-	
-	
-	posix.format = function(pathObject) {
-	  if (!util.isObject(pathObject)) {
-	    throw new TypeError(
-	        "Parameter 'pathObject' must be an object, not " + typeof pathObject
-	    );
-	  }
-	
-	  var root = pathObject.root || '';
-	
-	  if (!util.isString(root)) {
-	    throw new TypeError(
-	        "'pathObject.root' must be a string or undefined, not " +
-	        typeof pathObject.root
-	    );
-	  }
-	
-	  var dir = pathObject.dir ? pathObject.dir + posix.sep : '';
-	  var base = pathObject.base || '';
-	  return dir + base;
-	};
-	
-	
-	posix.parse = function(pathString) {
-	  if (!util.isString(pathString)) {
-	    throw new TypeError(
-	        "Parameter 'pathString' must be a string, not " + typeof pathString
-	    );
-	  }
-	  var allParts = posixSplitPath(pathString);
-	  if (!allParts || allParts.length !== 4) {
-	    throw new TypeError("Invalid path '" + pathString + "'");
-	  }
-	  allParts[1] = allParts[1] || '';
-	  allParts[2] = allParts[2] || '';
-	  allParts[3] = allParts[3] || '';
-	
-	  return {
-	    root: allParts[0],
-	    dir: allParts[0] + allParts[1].slice(0, -1),
-	    base: allParts[2],
-	    ext: allParts[3],
-	    name: allParts[2].slice(0, allParts[2].length - allParts[3].length)
-	  };
-	};
-	
-	
-	posix.sep = '/';
-	posix.delimiter = ':';
-	
-	
-	if (isWindows)
-	  module.exports = win32;
-	else /* posix */
-	  module.exports = posix;
-	
-	module.exports.posix = posix;
-	module.exports.win32 = win32;
-	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(30)))
-
-/***/ },
-/* 30 */
-/***/ function(module, exports) {
-
-	// shim for using process in browser
-	var process = module.exports = {};
-	
-	// cached from whatever global is present so that test runners that stub it
-	// don't break things.  But we need to wrap it in a try catch in case it is
-	// wrapped in strict mode code which doesn't define any globals.  It's inside a
-	// function because try/catches deoptimize in certain engines.
-	
-	var cachedSetTimeout;
-	var cachedClearTimeout;
-	
-	function defaultSetTimout() {
-	    throw new Error('setTimeout has not been defined');
-	}
-	function defaultClearTimeout () {
-	    throw new Error('clearTimeout has not been defined');
-	}
-	(function () {
-	    try {
-	        if (typeof setTimeout === 'function') {
-	            cachedSetTimeout = setTimeout;
-	        } else {
-	            cachedSetTimeout = defaultSetTimout;
-	        }
-	    } catch (e) {
-	        cachedSetTimeout = defaultSetTimout;
-	    }
-	    try {
-	        if (typeof clearTimeout === 'function') {
-	            cachedClearTimeout = clearTimeout;
-	        } else {
-	            cachedClearTimeout = defaultClearTimeout;
-	        }
-	    } catch (e) {
-	        cachedClearTimeout = defaultClearTimeout;
-	    }
-	} ())
-	function runTimeout(fun) {
-	    if (cachedSetTimeout === setTimeout) {
-	        //normal enviroments in sane situations
-	        return setTimeout(fun, 0);
-	    }
-	    // if setTimeout wasn't available but was latter defined
-	    if ((cachedSetTimeout === defaultSetTimout || !cachedSetTimeout) && setTimeout) {
-	        cachedSetTimeout = setTimeout;
-	        return setTimeout(fun, 0);
-	    }
-	    try {
-	        // when when somebody has screwed with setTimeout but no I.E. maddness
-	        return cachedSetTimeout(fun, 0);
-	    } catch(e){
-	        try {
-	            // When we are in I.E. but the script has been evaled so I.E. doesn't trust the global object when called normally
-	            return cachedSetTimeout.call(null, fun, 0);
-	        } catch(e){
-	            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error
-	            return cachedSetTimeout.call(this, fun, 0);
-	        }
-	    }
-	
-	
-	}
-	function runClearTimeout(marker) {
-	    if (cachedClearTimeout === clearTimeout) {
-	        //normal enviroments in sane situations
-	        return clearTimeout(marker);
-	    }
-	    // if clearTimeout wasn't available but was latter defined
-	    if ((cachedClearTimeout === defaultClearTimeout || !cachedClearTimeout) && clearTimeout) {
-	        cachedClearTimeout = clearTimeout;
-	        return clearTimeout(marker);
-	    }
-	    try {
-	        // when when somebody has screwed with setTimeout but no I.E. maddness
-	        return cachedClearTimeout(marker);
-	    } catch (e){
-	        try {
-	            // When we are in I.E. but the script has been evaled so I.E. doesn't  trust the global object when called normally
-	            return cachedClearTimeout.call(null, marker);
-	        } catch (e){
-	            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error.
-	            // Some versions of I.E. have different rules for clearTimeout vs setTimeout
-	            return cachedClearTimeout.call(this, marker);
-	        }
-	    }
-	
-	
-	
-	}
-	var queue = [];
-	var draining = false;
-	var currentQueue;
-	var queueIndex = -1;
-	
-	function cleanUpNextTick() {
-	    if (!draining || !currentQueue) {
-	        return;
-	    }
-	    draining = false;
-	    if (currentQueue.length) {
-	        queue = currentQueue.concat(queue);
-	    } else {
-	        queueIndex = -1;
-	    }
-	    if (queue.length) {
-	        drainQueue();
-	    }
-	}
-	
-	function drainQueue() {
-	    if (draining) {
-	        return;
-	    }
-	    var timeout = runTimeout(cleanUpNextTick);
-	    draining = true;
-	
-	    var len = queue.length;
-	    while(len) {
-	        currentQueue = queue;
-	        queue = [];
-	        while (++queueIndex < len) {
-	            if (currentQueue) {
-	                currentQueue[queueIndex].run();
-	            }
-	        }
-	        queueIndex = -1;
-	        len = queue.length;
-	    }
-	    currentQueue = null;
-	    draining = false;
-	    runClearTimeout(timeout);
-	}
-	
-	process.nextTick = function (fun) {
-	    var args = new Array(arguments.length - 1);
-	    if (arguments.length > 1) {
-	        for (var i = 1; i < arguments.length; i++) {
-	            args[i - 1] = arguments[i];
-	        }
-	    }
-	    queue.push(new Item(fun, args));
-	    if (queue.length === 1 && !draining) {
-	        runTimeout(drainQueue);
-	    }
-	};
-	
-	// v8 likes predictible objects
-	function Item(fun, array) {
-	    this.fun = fun;
-	    this.array = array;
-	}
-	Item.prototype.run = function () {
-	    this.fun.apply(null, this.array);
-	};
-	process.title = 'browser';
-	process.browser = true;
-	process.env = {};
-	process.argv = [];
-	process.version = ''; // empty string to avoid regexp issues
-	process.versions = {};
-	
-	function noop() {}
-	
-	process.on = noop;
-	process.addListener = noop;
-	process.once = noop;
-	process.off = noop;
-	process.removeListener = noop;
-	process.removeAllListeners = noop;
-	process.emit = noop;
-	
-	process.binding = function (name) {
-	    throw new Error('process.binding is not supported');
-	};
-	
-	process.cwd = function () { return '/' };
-	process.chdir = function (dir) {
-	    throw new Error('process.chdir is not supported');
-	};
-	process.umask = function() { return 0; };
-
-
-/***/ },
-/* 31 */
-/***/ function(module, exports, __webpack_require__) {
-
-	/* WEBPACK VAR INJECTION */(function(global, process) {// Copyright Joyent, Inc. and other Node contributors.
-	//
-	// Permission is hereby granted, free of charge, to any person obtaining a
-	// copy of this software and associated documentation files (the
-	// "Software"), to deal in the Software without restriction, including
-	// without limitation the rights to use, copy, modify, merge, publish,
-	// distribute, sublicense, and/or sell copies of the Software, and to permit
-	// persons to whom the Software is furnished to do so, subject to the
-	// following conditions:
-	//
-	// The above copyright notice and this permission notice shall be included
-	// in all copies or substantial portions of the Software.
-	//
-	// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-	// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-	// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-	// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-	// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-	// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-	// USE OR OTHER DEALINGS IN THE SOFTWARE.
-	
-	var formatRegExp = /%[sdj%]/g;
-	exports.format = function(f) {
-	  if (!isString(f)) {
-	    var objects = [];
-	    for (var i = 0; i < arguments.length; i++) {
-	      objects.push(inspect(arguments[i]));
-	    }
-	    return objects.join(' ');
-	  }
-	
-	  var i = 1;
-	  var args = arguments;
-	  var len = args.length;
-	  var str = String(f).replace(formatRegExp, function(x) {
-	    if (x === '%%') return '%';
-	    if (i >= len) return x;
-	    switch (x) {
-	      case '%s': return String(args[i++]);
-	      case '%d': return Number(args[i++]);
-	      case '%j':
-	        try {
-	          return JSON.stringify(args[i++]);
-	        } catch (_) {
-	          return '[Circular]';
-	        }
-	      default:
-	        return x;
-	    }
-	  });
-	  for (var x = args[i]; i < len; x = args[++i]) {
-	    if (isNull(x) || !isObject(x)) {
-	      str += ' ' + x;
-	    } else {
-	      str += ' ' + inspect(x);
-	    }
-	  }
-	  return str;
-	};
-	
-	
-	// Mark that a method should not be used.
-	// Returns a modified function which warns once by default.
-	// If --no-deprecation is set, then it is a no-op.
-	exports.deprecate = function(fn, msg) {
-	  // Allow for deprecating things in the process of starting up.
-	  if (isUndefined(global.process)) {
-	    return function() {
-	      return exports.deprecate(fn, msg).apply(this, arguments);
-	    };
-	  }
-	
-	  if (process.noDeprecation === true) {
-	    return fn;
-	  }
-	
-	  var warned = false;
-	  function deprecated() {
-	    if (!warned) {
-	      if (process.throwDeprecation) {
-	        throw new Error(msg);
-	      } else if (process.traceDeprecation) {
-	        console.trace(msg);
-	      } else {
-	        console.error(msg);
-	      }
-	      warned = true;
-	    }
-	    return fn.apply(this, arguments);
-	  }
-	
-	  return deprecated;
-	};
-	
-	
-	var debugs = {};
-	var debugEnviron;
-	exports.debuglog = function(set) {
-	  if (isUndefined(debugEnviron))
-	    debugEnviron = process.env.NODE_DEBUG || '';
-	  set = set.toUpperCase();
-	  if (!debugs[set]) {
-	    if (new RegExp('\\b' + set + '\\b', 'i').test(debugEnviron)) {
-	      var pid = process.pid;
-	      debugs[set] = function() {
-	        var msg = exports.format.apply(exports, arguments);
-	        console.error('%s %d: %s', set, pid, msg);
-	      };
-	    } else {
-	      debugs[set] = function() {};
-	    }
-	  }
-	  return debugs[set];
-	};
-	
-	
-	/**
-	 * Echos the value of a value. Trys to print the value out
-	 * in the best way possible given the different types.
-	 *
-	 * @param {Object} obj The object to print out.
-	 * @param {Object} opts Optional options object that alters the output.
-	 */
-	/* legacy: obj, showHidden, depth, colors*/
-	function inspect(obj, opts) {
-	  // default options
-	  var ctx = {
-	    seen: [],
-	    stylize: stylizeNoColor
-	  };
-	  // legacy...
-	  if (arguments.length >= 3) ctx.depth = arguments[2];
-	  if (arguments.length >= 4) ctx.colors = arguments[3];
-	  if (isBoolean(opts)) {
-	    // legacy...
-	    ctx.showHidden = opts;
-	  } else if (opts) {
-	    // got an "options" object
-	    exports._extend(ctx, opts);
-	  }
-	  // set default options
-	  if (isUndefined(ctx.showHidden)) ctx.showHidden = false;
-	  if (isUndefined(ctx.depth)) ctx.depth = 2;
-	  if (isUndefined(ctx.colors)) ctx.colors = false;
-	  if (isUndefined(ctx.customInspect)) ctx.customInspect = true;
-	  if (ctx.colors) ctx.stylize = stylizeWithColor;
-	  return formatValue(ctx, obj, ctx.depth);
-	}
-	exports.inspect = inspect;
-	
-	
-	// http://en.wikipedia.org/wiki/ANSI_escape_code#graphics
-	inspect.colors = {
-	  'bold' : [1, 22],
-	  'italic' : [3, 23],
-	  'underline' : [4, 24],
-	  'inverse' : [7, 27],
-	  'white' : [37, 39],
-	  'grey' : [90, 39],
-	  'black' : [30, 39],
-	  'blue' : [34, 39],
-	  'cyan' : [36, 39],
-	  'green' : [32, 39],
-	  'magenta' : [35, 39],
-	  'red' : [31, 39],
-	  'yellow' : [33, 39]
-	};
-	
-	// Don't use 'blue' not visible on cmd.exe
-	inspect.styles = {
-	  'special': 'cyan',
-	  'number': 'yellow',
-	  'boolean': 'yellow',
-	  'undefined': 'grey',
-	  'null': 'bold',
-	  'string': 'green',
-	  'date': 'magenta',
-	  // "name": intentionally not styling
-	  'regexp': 'red'
-	};
-	
-	
-	function stylizeWithColor(str, styleType) {
-	  var style = inspect.styles[styleType];
-	
-	  if (style) {
-	    return '\u001b[' + inspect.colors[style][0] + 'm' + str +
-	           '\u001b[' + inspect.colors[style][1] + 'm';
-	  } else {
-	    return str;
-	  }
-	}
-	
-	
-	function stylizeNoColor(str, styleType) {
-	  return str;
-	}
-	
-	
-	function arrayToHash(array) {
-	  var hash = {};
-	
-	  array.forEach(function(val, idx) {
-	    hash[val] = true;
-	  });
-	
-	  return hash;
-	}
-	
-	
-	function formatValue(ctx, value, recurseTimes) {
-	  // Provide a hook for user-specified inspect functions.
-	  // Check that value is an object with an inspect function on it
-	  if (ctx.customInspect &&
-	      value &&
-	      isFunction(value.inspect) &&
-	      // Filter out the util module, it's inspect function is special
-	      value.inspect !== exports.inspect &&
-	      // Also filter out any prototype objects using the circular check.
-	      !(value.constructor && value.constructor.prototype === value)) {
-	    var ret = value.inspect(recurseTimes, ctx);
-	    if (!isString(ret)) {
-	      ret = formatValue(ctx, ret, recurseTimes);
-	    }
-	    return ret;
-	  }
-	
-	  // Primitive types cannot have properties
-	  var primitive = formatPrimitive(ctx, value);
-	  if (primitive) {
-	    return primitive;
-	  }
-	
-	  // Look up the keys of the object.
-	  var keys = Object.keys(value);
-	  var visibleKeys = arrayToHash(keys);
-	
-	  if (ctx.showHidden) {
-	    keys = Object.getOwnPropertyNames(value);
-	  }
-	
-	  // IE doesn't make error fields non-enumerable
-	  // http://msdn.microsoft.com/en-us/library/ie/dww52sbt(v=vs.94).aspx
-	  if (isError(value)
-	      && (keys.indexOf('message') >= 0 || keys.indexOf('description') >= 0)) {
-	    return formatError(value);
-	  }
-	
-	  // Some type of object without properties can be shortcutted.
-	  if (keys.length === 0) {
-	    if (isFunction(value)) {
-	      var name = value.name ? ': ' + value.name : '';
-	      return ctx.stylize('[Function' + name + ']', 'special');
-	    }
-	    if (isRegExp(value)) {
-	      return ctx.stylize(RegExp.prototype.toString.call(value), 'regexp');
-	    }
-	    if (isDate(value)) {
-	      return ctx.stylize(Date.prototype.toString.call(value), 'date');
-	    }
-	    if (isError(value)) {
-	      return formatError(value);
-	    }
-	  }
-	
-	  var base = '', array = false, braces = ['{', '}'];
-	
-	  // Make Array say that they are Array
-	  if (isArray(value)) {
-	    array = true;
-	    braces = ['[', ']'];
-	  }
-	
-	  // Make functions say that they are functions
-	  if (isFunction(value)) {
-	    var n = value.name ? ': ' + value.name : '';
-	    base = ' [Function' + n + ']';
-	  }
-	
-	  // Make RegExps say that they are RegExps
-	  if (isRegExp(value)) {
-	    base = ' ' + RegExp.prototype.toString.call(value);
-	  }
-	
-	  // Make dates with properties first say the date
-	  if (isDate(value)) {
-	    base = ' ' + Date.prototype.toUTCString.call(value);
-	  }
-	
-	  // Make error with message first say the error
-	  if (isError(value)) {
-	    base = ' ' + formatError(value);
-	  }
-	
-	  if (keys.length === 0 && (!array || value.length == 0)) {
-	    return braces[0] + base + braces[1];
-	  }
-	
-	  if (recurseTimes < 0) {
-	    if (isRegExp(value)) {
-	      return ctx.stylize(RegExp.prototype.toString.call(value), 'regexp');
-	    } else {
-	      return ctx.stylize('[Object]', 'special');
-	    }
-	  }
-	
-	  ctx.seen.push(value);
-	
-	  var output;
-	  if (array) {
-	    output = formatArray(ctx, value, recurseTimes, visibleKeys, keys);
-	  } else {
-	    output = keys.map(function(key) {
-	      return formatProperty(ctx, value, recurseTimes, visibleKeys, key, array);
-	    });
-	  }
-	
-	  ctx.seen.pop();
-	
-	  return reduceToSingleString(output, base, braces);
-	}
-	
-	
-	function formatPrimitive(ctx, value) {
-	  if (isUndefined(value))
-	    return ctx.stylize('undefined', 'undefined');
-	  if (isString(value)) {
-	    var simple = '\'' + JSON.stringify(value).replace(/^"|"$/g, '')
-	                                             .replace(/'/g, "\\'")
-	                                             .replace(/\\"/g, '"') + '\'';
-	    return ctx.stylize(simple, 'string');
-	  }
-	  if (isNumber(value))
-	    return ctx.stylize('' + value, 'number');
-	  if (isBoolean(value))
-	    return ctx.stylize('' + value, 'boolean');
-	  // For some reason typeof null is "object", so special case here.
-	  if (isNull(value))
-	    return ctx.stylize('null', 'null');
-	}
-	
-	
-	function formatError(value) {
-	  return '[' + Error.prototype.toString.call(value) + ']';
-	}
-	
-	
-	function formatArray(ctx, value, recurseTimes, visibleKeys, keys) {
-	  var output = [];
-	  for (var i = 0, l = value.length; i < l; ++i) {
-	    if (hasOwnProperty(value, String(i))) {
-	      output.push(formatProperty(ctx, value, recurseTimes, visibleKeys,
-	          String(i), true));
-	    } else {
-	      output.push('');
-	    }
-	  }
-	  keys.forEach(function(key) {
-	    if (!key.match(/^\d+$/)) {
-	      output.push(formatProperty(ctx, value, recurseTimes, visibleKeys,
-	          key, true));
-	    }
-	  });
-	  return output;
-	}
-	
-	
-	function formatProperty(ctx, value, recurseTimes, visibleKeys, key, array) {
-	  var name, str, desc;
-	  desc = Object.getOwnPropertyDescriptor(value, key) || { value: value[key] };
-	  if (desc.get) {
-	    if (desc.set) {
-	      str = ctx.stylize('[Getter/Setter]', 'special');
-	    } else {
-	      str = ctx.stylize('[Getter]', 'special');
-	    }
-	  } else {
-	    if (desc.set) {
-	      str = ctx.stylize('[Setter]', 'special');
-	    }
-	  }
-	  if (!hasOwnProperty(visibleKeys, key)) {
-	    name = '[' + key + ']';
-	  }
-	  if (!str) {
-	    if (ctx.seen.indexOf(desc.value) < 0) {
-	      if (isNull(recurseTimes)) {
-	        str = formatValue(ctx, desc.value, null);
-	      } else {
-	        str = formatValue(ctx, desc.value, recurseTimes - 1);
-	      }
-	      if (str.indexOf('\n') > -1) {
-	        if (array) {
-	          str = str.split('\n').map(function(line) {
-	            return '  ' + line;
-	          }).join('\n').substr(2);
-	        } else {
-	          str = '\n' + str.split('\n').map(function(line) {
-	            return '   ' + line;
-	          }).join('\n');
-	        }
-	      }
-	    } else {
-	      str = ctx.stylize('[Circular]', 'special');
-	    }
-	  }
-	  if (isUndefined(name)) {
-	    if (array && key.match(/^\d+$/)) {
-	      return str;
-	    }
-	    name = JSON.stringify('' + key);
-	    if (name.match(/^"([a-zA-Z_][a-zA-Z_0-9]*)"$/)) {
-	      name = name.substr(1, name.length - 2);
-	      name = ctx.stylize(name, 'name');
-	    } else {
-	      name = name.replace(/'/g, "\\'")
-	                 .replace(/\\"/g, '"')
-	                 .replace(/(^"|"$)/g, "'");
-	      name = ctx.stylize(name, 'string');
-	    }
-	  }
-	
-	  return name + ': ' + str;
-	}
-	
-	
-	function reduceToSingleString(output, base, braces) {
-	  var numLinesEst = 0;
-	  var length = output.reduce(function(prev, cur) {
-	    numLinesEst++;
-	    if (cur.indexOf('\n') >= 0) numLinesEst++;
-	    return prev + cur.replace(/\u001b\[\d\d?m/g, '').length + 1;
-	  }, 0);
-	
-	  if (length > 60) {
-	    return braces[0] +
-	           (base === '' ? '' : base + '\n ') +
-	           ' ' +
-	           output.join(',\n  ') +
-	           ' ' +
-	           braces[1];
-	  }
-	
-	  return braces[0] + base + ' ' + output.join(', ') + ' ' + braces[1];
-	}
-	
-	
-	// NOTE: These type checking functions intentionally don't use `instanceof`
-	// because it is fragile and can be easily faked with `Object.create()`.
-	function isArray(ar) {
-	  return Array.isArray(ar);
-	}
-	exports.isArray = isArray;
-	
-	function isBoolean(arg) {
-	  return typeof arg === 'boolean';
-	}
-	exports.isBoolean = isBoolean;
-	
-	function isNull(arg) {
-	  return arg === null;
-	}
-	exports.isNull = isNull;
-	
-	function isNullOrUndefined(arg) {
-	  return arg == null;
-	}
-	exports.isNullOrUndefined = isNullOrUndefined;
-	
-	function isNumber(arg) {
-	  return typeof arg === 'number';
-	}
-	exports.isNumber = isNumber;
-	
-	function isString(arg) {
-	  return typeof arg === 'string';
-	}
-	exports.isString = isString;
-	
-	function isSymbol(arg) {
-	  return typeof arg === 'symbol';
-	}
-	exports.isSymbol = isSymbol;
-	
-	function isUndefined(arg) {
-	  return arg === void 0;
-	}
-	exports.isUndefined = isUndefined;
-	
-	function isRegExp(re) {
-	  return isObject(re) && objectToString(re) === '[object RegExp]';
-	}
-	exports.isRegExp = isRegExp;
-	
-	function isObject(arg) {
-	  return typeof arg === 'object' && arg !== null;
-	}
-	exports.isObject = isObject;
-	
-	function isDate(d) {
-	  return isObject(d) && objectToString(d) === '[object Date]';
-	}
-	exports.isDate = isDate;
-	
-	function isError(e) {
-	  return isObject(e) &&
-	      (objectToString(e) === '[object Error]' || e instanceof Error);
-	}
-	exports.isError = isError;
-	
-	function isFunction(arg) {
-	  return typeof arg === 'function';
-	}
-	exports.isFunction = isFunction;
-	
-	function isPrimitive(arg) {
-	  return arg === null ||
-	         typeof arg === 'boolean' ||
-	         typeof arg === 'number' ||
-	         typeof arg === 'string' ||
-	         typeof arg === 'symbol' ||  // ES6 symbol
-	         typeof arg === 'undefined';
-	}
-	exports.isPrimitive = isPrimitive;
-	
-	exports.isBuffer = __webpack_require__(32);
-	
-	function objectToString(o) {
-	  return Object.prototype.toString.call(o);
-	}
-	
-	
-	function pad(n) {
-	  return n < 10 ? '0' + n.toString(10) : n.toString(10);
-	}
-	
-	
-	var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep',
-	              'Oct', 'Nov', 'Dec'];
-	
-	// 26 Feb 16:19:34
-	function timestamp() {
-	  var d = new Date();
-	  var time = [pad(d.getHours()),
-	              pad(d.getMinutes()),
-	              pad(d.getSeconds())].join(':');
-	  return [d.getDate(), months[d.getMonth()], time].join(' ');
-	}
-	
-	
-	// log is just a thin wrapper to console.log that prepends a timestamp
-	exports.log = function() {
-	  console.log('%s - %s', timestamp(), exports.format.apply(exports, arguments));
-	};
-	
-	
-	/**
-	 * Inherit the prototype methods from one constructor into another.
-	 *
-	 * The Function.prototype.inherits from lang.js rewritten as a standalone
-	 * function (not on Function.prototype). NOTE: If this file is to be loaded
-	 * during bootstrapping this function needs to be rewritten using some native
-	 * functions as prototype setup using normal JavaScript does not work as
-	 * expected during bootstrapping (see mirror.js in r114903).
-	 *
-	 * @param {function} ctor Constructor function which needs to inherit the
-	 *     prototype.
-	 * @param {function} superCtor Constructor function to inherit prototype from.
-	 */
-	exports.inherits = __webpack_require__(33);
-	
-	exports._extend = function(origin, add) {
-	  // Don't do anything if add isn't an object
-	  if (!add || !isObject(add)) return origin;
-	
-	  var keys = Object.keys(add);
-	  var i = keys.length;
-	  while (i--) {
-	    origin[keys[i]] = add[keys[i]];
-	  }
-	  return origin;
-	};
-	
-	function hasOwnProperty(obj, prop) {
-	  return Object.prototype.hasOwnProperty.call(obj, prop);
-	}
-	
-	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }()), __webpack_require__(30)))
-
-/***/ },
-/* 32 */
-/***/ function(module, exports) {
-
-	module.exports = function isBuffer(arg) {
-	  return arg && typeof arg === 'object'
-	    && typeof arg.copy === 'function'
-	    && typeof arg.fill === 'function'
-	    && typeof arg.readUInt8 === 'function';
-	}
-
-/***/ },
-/* 33 */
-/***/ function(module, exports) {
-
-	if (typeof Object.create === 'function') {
-	  // implementation from standard node.js 'util' module
-	  module.exports = function inherits(ctor, superCtor) {
-	    ctor.super_ = superCtor
-	    ctor.prototype = Object.create(superCtor.prototype, {
-	      constructor: {
-	        value: ctor,
-	        enumerable: false,
-	        writable: true,
-	        configurable: true
-	      }
-	    });
-	  };
-	} else {
-	  // old school shim for old browsers
-	  module.exports = function inherits(ctor, superCtor) {
-	    ctor.super_ = superCtor
-	    var TempCtor = function () {}
-	    TempCtor.prototype = superCtor.prototype
-	    ctor.prototype = new TempCtor()
-	    ctor.prototype.constructor = ctor
-	  }
-	}
-
-
-/***/ },
 /* 34 */
-/***/ function(module, exports, __webpack_require__) {
+/***/ function(module, exports) {
 
-	/* WEBPACK VAR INJECTION */(function(global, process) {/**
-	* @license
-	* Copyright Google Inc. All Rights Reserved.
-	*
-	* Use of this source code is governed by an MIT-style license that can be
-	* found in the LICENSE file at https://angular.io/license
-	*/
-	(function (global, factory) {
-	     true ? factory() :
-	    typeof define === 'function' && define.amd ? define(factory) :
-	    (factory());
-	}(this, (function () { 'use strict';
-	
-	/**
-	 * @license
-	 * Copyright Google Inc. All Rights Reserved.
-	 *
-	 * Use of this source code is governed by an MIT-style license that can be
-	 * found in the LICENSE file at https://angular.io/license
-	 */
-	
-	
-	var Zone$1 = (function (global) {
-	    if (global.Zone) {
-	        throw new Error('Zone already loaded.');
-	    }
-	    var Zone = (function () {
-	        function Zone(parent, zoneSpec) {
-	            this._properties = null;
-	            this._parent = parent;
-	            this._name = zoneSpec ? zoneSpec.name || 'unnamed' : '<root>';
-	            this._properties = zoneSpec && zoneSpec.properties || {};
-	            this._zoneDelegate =
-	                new ZoneDelegate(this, this._parent && this._parent._zoneDelegate, zoneSpec);
-	        }
-	        Zone.assertZonePatched = function () {
-	            if (global.Promise !== ZoneAwarePromise) {
-	                throw new Error('Zone.js has detected that ZoneAwarePromise `(window|global).Promise` ' +
-	                    'has been overwritten.\n' +
-	                    'Most likely cause is that a Promise polyfill has been loaded ' +
-	                    'after Zone.js (Polyfilling Promise api is not necessary when zone.js is loaded. ' +
-	                    'If you must load one, do so before loading zone.js.)');
-	            }
-	        };
-	        Object.defineProperty(Zone, "current", {
-	            get: function () {
-	                return _currentZone;
-	            },
-	            enumerable: true,
-	            configurable: true
-	        });
-	        
-	        Object.defineProperty(Zone, "currentTask", {
-	            get: function () {
-	                return _currentTask;
-	            },
-	            enumerable: true,
-	            configurable: true
-	        });
-	        
-	        Object.defineProperty(Zone.prototype, "parent", {
-	            get: function () {
-	                return this._parent;
-	            },
-	            enumerable: true,
-	            configurable: true
-	        });
-	        
-	        Object.defineProperty(Zone.prototype, "name", {
-	            get: function () {
-	                return this._name;
-	            },
-	            enumerable: true,
-	            configurable: true
-	        });
-	        
-	        Zone.prototype.get = function (key) {
-	            var zone = this.getZoneWith(key);
-	            if (zone)
-	                return zone._properties[key];
-	        };
-	        Zone.prototype.getZoneWith = function (key) {
-	            var current = this;
-	            while (current) {
-	                if (current._properties.hasOwnProperty(key)) {
-	                    return current;
-	                }
-	                current = current._parent;
-	            }
-	            return null;
-	        };
-	        Zone.prototype.fork = function (zoneSpec) {
-	            if (!zoneSpec)
-	                throw new Error('ZoneSpec required!');
-	            return this._zoneDelegate.fork(this, zoneSpec);
-	        };
-	        Zone.prototype.wrap = function (callback, source) {
-	            if (typeof callback !== 'function') {
-	                throw new Error('Expecting function got: ' + callback);
-	            }
-	            var _callback = this._zoneDelegate.intercept(this, callback, source);
-	            var zone = this;
-	            return function () {
-	                return zone.runGuarded(_callback, this, arguments, source);
-	            };
-	        };
-	        Zone.prototype.run = function (callback, applyThis, applyArgs, source) {
-	            if (applyThis === void 0) { applyThis = null; }
-	            if (applyArgs === void 0) { applyArgs = null; }
-	            if (source === void 0) { source = null; }
-	            var oldZone = _currentZone;
-	            _currentZone = this;
-	            try {
-	                return this._zoneDelegate.invoke(this, callback, applyThis, applyArgs, source);
-	            }
-	            finally {
-	                _currentZone = oldZone;
-	            }
-	        };
-	        Zone.prototype.runGuarded = function (callback, applyThis, applyArgs, source) {
-	            if (applyThis === void 0) { applyThis = null; }
-	            if (applyArgs === void 0) { applyArgs = null; }
-	            if (source === void 0) { source = null; }
-	            var oldZone = _currentZone;
-	            _currentZone = this;
-	            try {
-	                try {
-	                    return this._zoneDelegate.invoke(this, callback, applyThis, applyArgs, source);
-	                }
-	                catch (error) {
-	                    if (this._zoneDelegate.handleError(this, error)) {
-	                        throw error;
-	                    }
-	                }
-	            }
-	            finally {
-	                _currentZone = oldZone;
-	            }
-	        };
-	        Zone.prototype.runTask = function (task, applyThis, applyArgs) {
-	            task.runCount++;
-	            if (task.zone != this)
-	                throw new Error('A task can only be run in the zone which created it! (Creation: ' + task.zone.name +
-	                    '; Execution: ' + this.name + ')');
-	            var previousTask = _currentTask;
-	            _currentTask = task;
-	            var oldZone = _currentZone;
-	            _currentZone = this;
-	            try {
-	                if (task.type == 'macroTask' && task.data && !task.data.isPeriodic) {
-	                    task.cancelFn = null;
-	                }
-	                try {
-	                    return this._zoneDelegate.invokeTask(this, task, applyThis, applyArgs);
-	                }
-	                catch (error) {
-	                    if (this._zoneDelegate.handleError(this, error)) {
-	                        throw error;
-	                    }
-	                }
-	            }
-	            finally {
-	                _currentZone = oldZone;
-	                _currentTask = previousTask;
-	            }
-	        };
-	        Zone.prototype.scheduleMicroTask = function (source, callback, data, customSchedule) {
-	            return this._zoneDelegate.scheduleTask(this, new ZoneTask('microTask', this, source, callback, data, customSchedule, null));
-	        };
-	        Zone.prototype.scheduleMacroTask = function (source, callback, data, customSchedule, customCancel) {
-	            return this._zoneDelegate.scheduleTask(this, new ZoneTask('macroTask', this, source, callback, data, customSchedule, customCancel));
-	        };
-	        Zone.prototype.scheduleEventTask = function (source, callback, data, customSchedule, customCancel) {
-	            return this._zoneDelegate.scheduleTask(this, new ZoneTask('eventTask', this, source, callback, data, customSchedule, customCancel));
-	        };
-	        Zone.prototype.cancelTask = function (task) {
-	            var value = this._zoneDelegate.cancelTask(this, task);
-	            task.runCount = -1;
-	            task.cancelFn = null;
-	            return value;
-	        };
-	        Zone.__symbol__ = __symbol__;
-	        return Zone;
-	    }());
-	    
-	    var ZoneDelegate = (function () {
-	        function ZoneDelegate(zone, parentDelegate, zoneSpec) {
-	            this._taskCounts = { microTask: 0, macroTask: 0, eventTask: 0 };
-	            this.zone = zone;
-	            this._parentDelegate = parentDelegate;
-	            this._forkZS = zoneSpec && (zoneSpec && zoneSpec.onFork ? zoneSpec : parentDelegate._forkZS);
-	            this._forkDlgt = zoneSpec && (zoneSpec.onFork ? parentDelegate : parentDelegate._forkDlgt);
-	            this._interceptZS =
-	                zoneSpec && (zoneSpec.onIntercept ? zoneSpec : parentDelegate._interceptZS);
-	            this._interceptDlgt =
-	                zoneSpec && (zoneSpec.onIntercept ? parentDelegate : parentDelegate._interceptDlgt);
-	            this._invokeZS = zoneSpec && (zoneSpec.onInvoke ? zoneSpec : parentDelegate._invokeZS);
-	            this._invokeDlgt =
-	                zoneSpec && (zoneSpec.onInvoke ? parentDelegate : parentDelegate._invokeDlgt);
-	            this._handleErrorZS =
-	                zoneSpec && (zoneSpec.onHandleError ? zoneSpec : parentDelegate._handleErrorZS);
-	            this._handleErrorDlgt =
-	                zoneSpec && (zoneSpec.onHandleError ? parentDelegate : parentDelegate._handleErrorDlgt);
-	            this._scheduleTaskZS =
-	                zoneSpec && (zoneSpec.onScheduleTask ? zoneSpec : parentDelegate._scheduleTaskZS);
-	            this._scheduleTaskDlgt =
-	                zoneSpec && (zoneSpec.onScheduleTask ? parentDelegate : parentDelegate._scheduleTaskDlgt);
-	            this._invokeTaskZS =
-	                zoneSpec && (zoneSpec.onInvokeTask ? zoneSpec : parentDelegate._invokeTaskZS);
-	            this._invokeTaskDlgt =
-	                zoneSpec && (zoneSpec.onInvokeTask ? parentDelegate : parentDelegate._invokeTaskDlgt);
-	            this._cancelTaskZS =
-	                zoneSpec && (zoneSpec.onCancelTask ? zoneSpec : parentDelegate._cancelTaskZS);
-	            this._cancelTaskDlgt =
-	                zoneSpec && (zoneSpec.onCancelTask ? parentDelegate : parentDelegate._cancelTaskDlgt);
-	            this._hasTaskZS = zoneSpec && (zoneSpec.onHasTask ? zoneSpec : parentDelegate._hasTaskZS);
-	            this._hasTaskDlgt =
-	                zoneSpec && (zoneSpec.onHasTask ? parentDelegate : parentDelegate._hasTaskDlgt);
-	        }
-	        ZoneDelegate.prototype.fork = function (targetZone, zoneSpec) {
-	            return this._forkZS ? this._forkZS.onFork(this._forkDlgt, this.zone, targetZone, zoneSpec) :
-	                new Zone(targetZone, zoneSpec);
-	        };
-	        ZoneDelegate.prototype.intercept = function (targetZone, callback, source) {
-	            return this._interceptZS ?
-	                this._interceptZS.onIntercept(this._interceptDlgt, this.zone, targetZone, callback, source) :
-	                callback;
-	        };
-	        ZoneDelegate.prototype.invoke = function (targetZone, callback, applyThis, applyArgs, source) {
-	            return this._invokeZS ?
-	                this._invokeZS.onInvoke(this._invokeDlgt, this.zone, targetZone, callback, applyThis, applyArgs, source) :
-	                callback.apply(applyThis, applyArgs);
-	        };
-	        ZoneDelegate.prototype.handleError = function (targetZone, error) {
-	            return this._handleErrorZS ?
-	                this._handleErrorZS.onHandleError(this._handleErrorDlgt, this.zone, targetZone, error) :
-	                true;
-	        };
-	        ZoneDelegate.prototype.scheduleTask = function (targetZone, task) {
-	            try {
-	                if (this._scheduleTaskZS) {
-	                    return this._scheduleTaskZS.onScheduleTask(this._scheduleTaskDlgt, this.zone, targetZone, task);
-	                }
-	                else if (task.scheduleFn) {
-	                    task.scheduleFn(task);
-	                }
-	                else if (task.type == 'microTask') {
-	                    scheduleMicroTask(task);
-	                }
-	                else {
-	                    throw new Error('Task is missing scheduleFn.');
-	                }
-	                return task;
-	            }
-	            finally {
-	                if (targetZone == this.zone) {
-	                    this._updateTaskCount(task.type, 1);
-	                }
-	            }
-	        };
-	        ZoneDelegate.prototype.invokeTask = function (targetZone, task, applyThis, applyArgs) {
-	            try {
-	                return this._invokeTaskZS ?
-	                    this._invokeTaskZS.onInvokeTask(this._invokeTaskDlgt, this.zone, targetZone, task, applyThis, applyArgs) :
-	                    task.callback.apply(applyThis, applyArgs);
-	            }
-	            finally {
-	                if (targetZone == this.zone && (task.type != 'eventTask') &&
-	                    !(task.data && task.data.isPeriodic)) {
-	                    this._updateTaskCount(task.type, -1);
-	                }
-	            }
-	        };
-	        ZoneDelegate.prototype.cancelTask = function (targetZone, task) {
-	            var value;
-	            if (this._cancelTaskZS) {
-	                value = this._cancelTaskZS.onCancelTask(this._cancelTaskDlgt, this.zone, targetZone, task);
-	            }
-	            else if (!task.cancelFn) {
-	                throw new Error('Task does not support cancellation, or is already canceled.');
-	            }
-	            else {
-	                value = task.cancelFn(task);
-	            }
-	            if (targetZone == this.zone) {
-	                // this should not be in the finally block, because exceptions assume not canceled.
-	                this._updateTaskCount(task.type, -1);
-	            }
-	            return value;
-	        };
-	        ZoneDelegate.prototype.hasTask = function (targetZone, isEmpty) {
-	            return this._hasTaskZS &&
-	                this._hasTaskZS.onHasTask(this._hasTaskDlgt, this.zone, targetZone, isEmpty);
-	        };
-	        ZoneDelegate.prototype._updateTaskCount = function (type, count) {
-	            var counts = this._taskCounts;
-	            var prev = counts[type];
-	            var next = counts[type] = prev + count;
-	            if (next < 0) {
-	                throw new Error('More tasks executed then were scheduled.');
-	            }
-	            if (prev == 0 || next == 0) {
-	                var isEmpty = {
-	                    microTask: counts.microTask > 0,
-	                    macroTask: counts.macroTask > 0,
-	                    eventTask: counts.eventTask > 0,
-	                    change: type
-	                };
-	                try {
-	                    this.hasTask(this.zone, isEmpty);
-	                }
-	                finally {
-	                    if (this._parentDelegate) {
-	                        this._parentDelegate._updateTaskCount(type, count);
-	                    }
-	                }
-	            }
-	        };
-	        return ZoneDelegate;
-	    }());
-	    var ZoneTask = (function () {
-	        function ZoneTask(type, zone, source, callback, options, scheduleFn, cancelFn) {
-	            this.runCount = 0;
-	            this.type = type;
-	            this.zone = zone;
-	            this.source = source;
-	            this.data = options;
-	            this.scheduleFn = scheduleFn;
-	            this.cancelFn = cancelFn;
-	            this.callback = callback;
-	            var self = this;
-	            this.invoke = function () {
-	                _numberOfNestedTaskFrames++;
-	                try {
-	                    return zone.runTask(self, this, arguments);
-	                }
-	                finally {
-	                    if (_numberOfNestedTaskFrames == 1) {
-	                        drainMicroTaskQueue();
-	                    }
-	                    _numberOfNestedTaskFrames--;
-	                }
-	            };
-	        }
-	        ZoneTask.prototype.toString = function () {
-	            if (this.data && typeof this.data.handleId !== 'undefined') {
-	                return this.data.handleId;
-	            }
-	            else {
-	                return Object.prototype.toString.call(this);
-	            }
-	        };
-	        return ZoneTask;
-	    }());
-	    function __symbol__(name) {
-	        return '__zone_symbol__' + name;
-	    }
-	    
-	    var symbolSetTimeout = __symbol__('setTimeout');
-	    var symbolPromise = __symbol__('Promise');
-	    var symbolThen = __symbol__('then');
-	    var _currentZone = new Zone(null, null);
-	    var _currentTask = null;
-	    var _microTaskQueue = [];
-	    var _isDrainingMicrotaskQueue = false;
-	    var _uncaughtPromiseErrors = [];
-	    var _numberOfNestedTaskFrames = 0;
-	    function scheduleQueueDrain() {
-	        // if we are not running in any task, and there has not been anything scheduled
-	        // we must bootstrap the initial task creation by manually scheduling the drain
-	        if (_numberOfNestedTaskFrames == 0 && _microTaskQueue.length == 0) {
-	            // We are not running in Task, so we need to kickstart the microtask queue.
-	            if (global[symbolPromise]) {
-	                global[symbolPromise].resolve(0)[symbolThen](drainMicroTaskQueue);
-	            }
-	            else {
-	                global[symbolSetTimeout](drainMicroTaskQueue, 0);
-	            }
-	        }
-	    }
-	    function scheduleMicroTask(task) {
-	        scheduleQueueDrain();
-	        _microTaskQueue.push(task);
-	    }
-	    function consoleError(e) {
-	        var rejection = e && e.rejection;
-	        if (rejection) {
-	            console.error('Unhandled Promise rejection:', rejection instanceof Error ? rejection.message : rejection, '; Zone:', e.zone.name, '; Task:', e.task && e.task.source, '; Value:', rejection, rejection instanceof Error ? rejection.stack : undefined);
-	        }
-	        console.error(e);
-	    }
-	    function drainMicroTaskQueue() {
-	        if (!_isDrainingMicrotaskQueue) {
-	            _isDrainingMicrotaskQueue = true;
-	            while (_microTaskQueue.length) {
-	                var queue = _microTaskQueue;
-	                _microTaskQueue = [];
-	                for (var i = 0; i < queue.length; i++) {
-	                    var task = queue[i];
-	                    try {
-	                        task.zone.runTask(task, null, null);
-	                    }
-	                    catch (e) {
-	                        consoleError(e);
-	                    }
-	                }
-	            }
-	            while (_uncaughtPromiseErrors.length) {
-	                var _loop_1 = function() {
-	                    var uncaughtPromiseError = _uncaughtPromiseErrors.shift();
-	                    try {
-	                        uncaughtPromiseError.zone.runGuarded(function () {
-	                            throw uncaughtPromiseError;
-	                        });
-	                    }
-	                    catch (e) {
-	                        consoleError(e);
-	                    }
-	                };
-	                while (_uncaughtPromiseErrors.length) {
-	                    _loop_1();
-	                }
-	            }
-	            _isDrainingMicrotaskQueue = false;
-	        }
-	    }
-	    function isThenable(value) {
-	        return value && value.then;
-	    }
-	    function forwardResolution(value) {
-	        return value;
-	    }
-	    function forwardRejection(rejection) {
-	        return ZoneAwarePromise.reject(rejection);
-	    }
-	    var symbolState = __symbol__('state');
-	    var symbolValue = __symbol__('value');
-	    var source = 'Promise.then';
-	    var UNRESOLVED = null;
-	    var RESOLVED = true;
-	    var REJECTED = false;
-	    var REJECTED_NO_CATCH = 0;
-	    function makeResolver(promise, state) {
-	        return function (v) {
-	            resolvePromise(promise, state, v);
-	            // Do not return value or you will break the Promise spec.
-	        };
-	    }
-	    function resolvePromise(promise, state, value) {
-	        if (promise[symbolState] === UNRESOLVED) {
-	            if (value instanceof ZoneAwarePromise && value[symbolState] !== UNRESOLVED) {
-	                clearRejectedNoCatch(value);
-	                resolvePromise(promise, value[symbolState], value[symbolValue]);
-	            }
-	            else if (isThenable(value)) {
-	                value.then(makeResolver(promise, state), makeResolver(promise, false));
-	            }
-	            else {
-	                promise[symbolState] = state;
-	                var queue = promise[symbolValue];
-	                promise[symbolValue] = value;
-	                for (var i = 0; i < queue.length;) {
-	                    scheduleResolveOrReject(promise, queue[i++], queue[i++], queue[i++], queue[i++]);
-	                }
-	                if (queue.length == 0 && state == REJECTED) {
-	                    promise[symbolState] = REJECTED_NO_CATCH;
-	                    try {
-	                        throw new Error('Uncaught (in promise): ' + value +
-	                            (value && value.stack ? '\n' + value.stack : ''));
-	                    }
-	                    catch (e) {
-	                        var error_1 = e;
-	                        error_1.rejection = value;
-	                        error_1.promise = promise;
-	                        error_1.zone = Zone.current;
-	                        error_1.task = Zone.currentTask;
-	                        _uncaughtPromiseErrors.push(error_1);
-	                        scheduleQueueDrain();
-	                    }
-	                }
-	            }
-	        }
-	        // Resolving an already resolved promise is a noop.
-	        return promise;
-	    }
-	    function clearRejectedNoCatch(promise) {
-	        if (promise[symbolState] === REJECTED_NO_CATCH) {
-	            promise[symbolState] = REJECTED;
-	            for (var i = 0; i < _uncaughtPromiseErrors.length; i++) {
-	                if (promise === _uncaughtPromiseErrors[i].promise) {
-	                    _uncaughtPromiseErrors.splice(i, 1);
-	                    break;
-	                }
-	            }
-	        }
-	    }
-	    function scheduleResolveOrReject(promise, zone, chainPromise, onFulfilled, onRejected) {
-	        clearRejectedNoCatch(promise);
-	        var delegate = promise[symbolState] ? onFulfilled || forwardResolution : onRejected || forwardRejection;
-	        zone.scheduleMicroTask(source, function () {
-	            try {
-	                resolvePromise(chainPromise, true, zone.run(delegate, null, [promise[symbolValue]]));
-	            }
-	            catch (error) {
-	                resolvePromise(chainPromise, false, error);
-	            }
-	        });
-	    }
-	    var ZoneAwarePromise = (function () {
-	        function ZoneAwarePromise(executor) {
-	            var promise = this;
-	            if (!(promise instanceof ZoneAwarePromise)) {
-	                throw new Error('Must be an instanceof Promise.');
-	            }
-	            promise[symbolState] = UNRESOLVED;
-	            promise[symbolValue] = []; // queue;
-	            try {
-	                executor && executor(makeResolver(promise, RESOLVED), makeResolver(promise, REJECTED));
-	            }
-	            catch (e) {
-	                resolvePromise(promise, false, e);
-	            }
-	        }
-	        ZoneAwarePromise.resolve = function (value) {
-	            return resolvePromise(new this(null), RESOLVED, value);
-	        };
-	        ZoneAwarePromise.reject = function (error) {
-	            return resolvePromise(new this(null), REJECTED, error);
-	        };
-	        ZoneAwarePromise.race = function (values) {
-	            var resolve;
-	            var reject;
-	            var promise = new this(function (res, rej) {
-	                _a = [res, rej], resolve = _a[0], reject = _a[1];
-	                var _a;
-	            });
-	            function onResolve(value) {
-	                promise && (promise = null || resolve(value));
-	            }
-	            function onReject(error) {
-	                promise && (promise = null || reject(error));
-	            }
-	            for (var _i = 0, values_1 = values; _i < values_1.length; _i++) {
-	                var value = values_1[_i];
-	                if (!isThenable(value)) {
-	                    value = this.resolve(value);
-	                }
-	                value.then(onResolve, onReject);
-	            }
-	            return promise;
-	        };
-	        ZoneAwarePromise.all = function (values) {
-	            var resolve;
-	            var reject;
-	            var promise = new this(function (res, rej) {
-	                resolve = res;
-	                reject = rej;
-	            });
-	            var count = 0;
-	            var resolvedValues = [];
-	            for (var _i = 0, values_2 = values; _i < values_2.length; _i++) {
-	                var value = values_2[_i];
-	                if (!isThenable(value)) {
-	                    value = this.resolve(value);
-	                }
-	                value.then((function (index) { return function (value) {
-	                    resolvedValues[index] = value;
-	                    count--;
-	                    if (!count) {
-	                        resolve(resolvedValues);
-	                    }
-	                }; })(count), reject);
-	                count++;
-	            }
-	            if (!count)
-	                resolve(resolvedValues);
-	            return promise;
-	        };
-	        ZoneAwarePromise.prototype.then = function (onFulfilled, onRejected) {
-	            var chainPromise = new this.constructor(null);
-	            var zone = Zone.current;
-	            if (this[symbolState] == UNRESOLVED) {
-	                this[symbolValue].push(zone, chainPromise, onFulfilled, onRejected);
-	            }
-	            else {
-	                scheduleResolveOrReject(this, zone, chainPromise, onFulfilled, onRejected);
-	            }
-	            return chainPromise;
-	        };
-	        ZoneAwarePromise.prototype.catch = function (onRejected) {
-	            return this.then(null, onRejected);
-	        };
-	        return ZoneAwarePromise;
-	    }());
-	    // Protect against aggressive optimizers dropping seemingly unused properties.
-	    // E.g. Closure Compiler in advanced mode.
-	    ZoneAwarePromise['resolve'] = ZoneAwarePromise.resolve;
-	    ZoneAwarePromise['reject'] = ZoneAwarePromise.reject;
-	    ZoneAwarePromise['race'] = ZoneAwarePromise.race;
-	    ZoneAwarePromise['all'] = ZoneAwarePromise.all;
-	    var NativePromise = global[__symbol__('Promise')] = global.Promise;
-	    global.Promise = ZoneAwarePromise;
-	    function patchThen(NativePromise) {
-	        var NativePromiseProtototype = NativePromise.prototype;
-	        var NativePromiseThen = NativePromiseProtototype[__symbol__('then')] =
-	            NativePromiseProtototype.then;
-	        NativePromiseProtototype.then = function (onResolve, onReject) {
-	            var nativePromise = this;
-	            return new ZoneAwarePromise(function (resolve, reject) {
-	                NativePromiseThen.call(nativePromise, resolve, reject);
-	            })
-	                .then(onResolve, onReject);
-	        };
-	    }
-	    if (NativePromise) {
-	        patchThen(NativePromise);
-	        if (typeof global['fetch'] !== 'undefined') {
-	            var fetchPromise = void 0;
-	            try {
-	                // In MS Edge this throws
-	                fetchPromise = global['fetch']();
-	            }
-	            catch (e) {
-	                // In Chrome this throws instead.
-	                fetchPromise = global['fetch']('about:blank');
-	            }
-	            // ignore output to prevent error;
-	            fetchPromise.then(function () { return null; }, function () { return null; });
-	            if (fetchPromise.constructor != NativePromise &&
-	                fetchPromise.constructor != ZoneAwarePromise) {
-	                patchThen(fetchPromise.constructor);
-	            }
-	        }
-	    }
-	    // This is not part of public API, but it is usefull for tests, so we expose it.
-	    Promise[Zone.__symbol__('uncaughtPromiseErrors')] = _uncaughtPromiseErrors;
-	    return global.Zone = Zone;
-	})(typeof window === 'object' && window || typeof self === 'object' && self || global);
-	
-	/**
-	 * @license
-	 * Copyright Google Inc. All Rights Reserved.
-	 *
-	 * Use of this source code is governed by an MIT-style license that can be
-	 * found in the LICENSE file at https://angular.io/license
-	 */
-	var zoneSymbol = Zone['__symbol__'];
-	var _global$1 = typeof window === 'object' && window || typeof self === 'object' && self || global;
-	function bindArguments(args, source) {
-	    for (var i = args.length - 1; i >= 0; i--) {
-	        if (typeof args[i] === 'function') {
-	            args[i] = Zone.current.wrap(args[i], source + '_' + i);
-	        }
-	    }
-	    return args;
-	}
-	
-	function patchPrototype(prototype, fnNames) {
-	    var source = prototype.constructor['name'];
-	    var _loop_1 = function(i) {
-	        var name_1 = fnNames[i];
-	        var delegate = prototype[name_1];
-	        if (delegate) {
-	            prototype[name_1] = (function (delegate) {
-	                return function () {
-	                    return delegate.apply(this, bindArguments(arguments, source + '.' + name_1));
-	                };
-	            })(delegate);
-	        }
-	    };
-	    for (var i = 0; i < fnNames.length; i++) {
-	        _loop_1(i);
-	    }
-	}
-	
-	var isWebWorker = (typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope);
-	var isNode = (typeof process !== 'undefined' && {}.toString.call(process) === '[object process]');
-	var isBrowser = !isNode && !isWebWorker && !!(typeof window !== 'undefined' && window['HTMLElement']);
-	function patchProperty(obj, prop) {
-	    var desc = Object.getOwnPropertyDescriptor(obj, prop) || { enumerable: true, configurable: true };
-	    // A property descriptor cannot have getter/setter and be writable
-	    // deleting the writable and value properties avoids this error:
-	    //
-	    // TypeError: property descriptors must not specify a value or be writable when a
-	    // getter or setter has been specified
-	    delete desc.writable;
-	    delete desc.value;
-	    // substr(2) cuz 'onclick' -> 'click', etc
-	    var eventName = prop.substr(2);
-	    var _prop = '_' + prop;
-	    desc.set = function (fn) {
-	        if (this[_prop]) {
-	            this.removeEventListener(eventName, this[_prop]);
-	        }
-	        if (typeof fn === 'function') {
-	            var wrapFn = function (event) {
-	                var result;
-	                result = fn.apply(this, arguments);
-	                if (result != undefined && !result)
-	                    event.preventDefault();
-	            };
-	            this[_prop] = wrapFn;
-	            this.addEventListener(eventName, wrapFn, false);
-	        }
-	        else {
-	            this[_prop] = null;
-	        }
-	    };
-	    // The getter would return undefined for unassigned properties but the default value of an
-	    // unassigned property is null
-	    desc.get = function () {
-	        return this[_prop] || null;
-	    };
-	    Object.defineProperty(obj, prop, desc);
-	}
-	
-	function patchOnProperties(obj, properties) {
-	    var onProperties = [];
-	    for (var prop in obj) {
-	        if (prop.substr(0, 2) == 'on') {
-	            onProperties.push(prop);
-	        }
-	    }
-	    for (var j = 0; j < onProperties.length; j++) {
-	        patchProperty(obj, onProperties[j]);
-	    }
-	    if (properties) {
-	        for (var i = 0; i < properties.length; i++) {
-	            patchProperty(obj, 'on' + properties[i]);
-	        }
-	    }
-	}
-	
-	var EVENT_TASKS = zoneSymbol('eventTasks');
-	// For EventTarget
-	var ADD_EVENT_LISTENER = 'addEventListener';
-	var REMOVE_EVENT_LISTENER = 'removeEventListener';
-	function findExistingRegisteredTask(target, handler, name, capture, remove) {
-	    var eventTasks = target[EVENT_TASKS];
-	    if (eventTasks) {
-	        for (var i = 0; i < eventTasks.length; i++) {
-	            var eventTask = eventTasks[i];
-	            var data = eventTask.data;
-	            if (data.handler === handler && data.useCapturing === capture && data.eventName === name) {
-	                if (remove) {
-	                    eventTasks.splice(i, 1);
-	                }
-	                return eventTask;
-	            }
-	        }
-	    }
-	    return null;
-	}
-	function attachRegisteredEvent(target, eventTask) {
-	    var eventTasks = target[EVENT_TASKS];
-	    if (!eventTasks) {
-	        eventTasks = target[EVENT_TASKS] = [];
-	    }
-	    eventTasks.push(eventTask);
-	}
-	function makeZoneAwareAddListener(addFnName, removeFnName, useCapturingParam, allowDuplicates) {
-	    if (useCapturingParam === void 0) { useCapturingParam = true; }
-	    if (allowDuplicates === void 0) { allowDuplicates = false; }
-	    var addFnSymbol = zoneSymbol(addFnName);
-	    var removeFnSymbol = zoneSymbol(removeFnName);
-	    var defaultUseCapturing = useCapturingParam ? false : undefined;
-	    function scheduleEventListener(eventTask) {
-	        var meta = eventTask.data;
-	        attachRegisteredEvent(meta.target, eventTask);
-	        return meta.target[addFnSymbol](meta.eventName, eventTask.invoke, meta.useCapturing);
-	    }
-	    function cancelEventListener(eventTask) {
-	        var meta = eventTask.data;
-	        findExistingRegisteredTask(meta.target, eventTask.invoke, meta.eventName, meta.useCapturing, true);
-	        meta.target[removeFnSymbol](meta.eventName, eventTask.invoke, meta.useCapturing);
-	    }
-	    return function zoneAwareAddListener(self, args) {
-	        var eventName = args[0];
-	        var handler = args[1];
-	        var useCapturing = args[2] || defaultUseCapturing;
-	        // - Inside a Web Worker, `this` is undefined, the context is `global`
-	        // - When `addEventListener` is called on the global context in strict mode, `this` is undefined
-	        // see https://github.com/angular/zone.js/issues/190
-	        var target = self || _global$1;
-	        var delegate = null;
-	        if (typeof handler == 'function') {
-	            delegate = handler;
-	        }
-	        else if (handler && handler.handleEvent) {
-	            delegate = function (event) { return handler.handleEvent(event); };
-	        }
-	        var validZoneHandler = false;
-	        try {
-	            // In cross site contexts (such as WebDriver frameworks like Selenium),
-	            // accessing the handler object here will cause an exception to be thrown which
-	            // will fail tests prematurely.
-	            validZoneHandler = handler && handler.toString() === '[object FunctionWrapper]';
-	        }
-	        catch (e) {
-	            // Returning nothing here is fine, because objects in a cross-site context are unusable
-	            return;
-	        }
-	        // Ignore special listeners of IE11 & Edge dev tools, see
-	        // https://github.com/angular/zone.js/issues/150
-	        if (!delegate || validZoneHandler) {
-	            return target[addFnSymbol](eventName, handler, useCapturing);
-	        }
-	        if (!allowDuplicates) {
-	            var eventTask = findExistingRegisteredTask(target, handler, eventName, useCapturing, false);
-	            if (eventTask) {
-	                // we already registered, so this will have noop.
-	                return target[addFnSymbol](eventName, eventTask.invoke, useCapturing);
-	            }
-	        }
-	        var zone = Zone.current;
-	        var source = target.constructor['name'] + '.' + addFnName + ':' + eventName;
-	        var data = {
-	            target: target,
-	            eventName: eventName,
-	            name: eventName,
-	            useCapturing: useCapturing,
-	            handler: handler
-	        };
-	        zone.scheduleEventTask(source, delegate, data, scheduleEventListener, cancelEventListener);
-	    };
-	}
-	function makeZoneAwareRemoveListener(fnName, useCapturingParam) {
-	    if (useCapturingParam === void 0) { useCapturingParam = true; }
-	    var symbol = zoneSymbol(fnName);
-	    var defaultUseCapturing = useCapturingParam ? false : undefined;
-	    return function zoneAwareRemoveListener(self, args) {
-	        var eventName = args[0];
-	        var handler = args[1];
-	        var useCapturing = args[2] || defaultUseCapturing;
-	        // - Inside a Web Worker, `this` is undefined, the context is `global`
-	        // - When `addEventListener` is called on the global context in strict mode, `this` is undefined
-	        // see https://github.com/angular/zone.js/issues/190
-	        var target = self || _global$1;
-	        var eventTask = findExistingRegisteredTask(target, handler, eventName, useCapturing, true);
-	        if (eventTask) {
-	            eventTask.zone.cancelTask(eventTask);
-	        }
-	        else {
-	            target[symbol](eventName, handler, useCapturing);
-	        }
-	    };
-	}
-	
-	var zoneAwareAddEventListener = makeZoneAwareAddListener(ADD_EVENT_LISTENER, REMOVE_EVENT_LISTENER);
-	var zoneAwareRemoveEventListener = makeZoneAwareRemoveListener(REMOVE_EVENT_LISTENER);
-	function patchEventTargetMethods(obj) {
-	    if (obj && obj.addEventListener) {
-	        patchMethod(obj, ADD_EVENT_LISTENER, function () { return zoneAwareAddEventListener; });
-	        patchMethod(obj, REMOVE_EVENT_LISTENER, function () { return zoneAwareRemoveEventListener; });
-	        return true;
-	    }
-	    else {
-	        return false;
-	    }
-	}
-	var originalInstanceKey = zoneSymbol('originalInstance');
-	// wrap some native API on `window`
-	function patchClass(className) {
-	    var OriginalClass = _global$1[className];
-	    if (!OriginalClass)
-	        return;
-	    _global$1[className] = function () {
-	        var a = bindArguments(arguments, className);
-	        switch (a.length) {
-	            case 0:
-	                this[originalInstanceKey] = new OriginalClass();
-	                break;
-	            case 1:
-	                this[originalInstanceKey] = new OriginalClass(a[0]);
-	                break;
-	            case 2:
-	                this[originalInstanceKey] = new OriginalClass(a[0], a[1]);
-	                break;
-	            case 3:
-	                this[originalInstanceKey] = new OriginalClass(a[0], a[1], a[2]);
-	                break;
-	            case 4:
-	                this[originalInstanceKey] = new OriginalClass(a[0], a[1], a[2], a[3]);
-	                break;
-	            default:
-	                throw new Error('Arg list too long.');
-	        }
-	    };
-	    var instance = new OriginalClass(function () { });
-	    var prop;
-	    for (prop in instance) {
-	        // https://bugs.webkit.org/show_bug.cgi?id=44721
-	        if (className === 'XMLHttpRequest' && prop === 'responseBlob')
-	            continue;
-	        (function (prop) {
-	            if (typeof instance[prop] === 'function') {
-	                _global$1[className].prototype[prop] = function () {
-	                    return this[originalInstanceKey][prop].apply(this[originalInstanceKey], arguments);
-	                };
-	            }
-	            else {
-	                Object.defineProperty(_global$1[className].prototype, prop, {
-	                    set: function (fn) {
-	                        if (typeof fn === 'function') {
-	                            this[originalInstanceKey][prop] = Zone.current.wrap(fn, className + '.' + prop);
-	                        }
-	                        else {
-	                            this[originalInstanceKey][prop] = fn;
-	                        }
-	                    },
-	                    get: function () {
-	                        return this[originalInstanceKey][prop];
-	                    }
-	                });
-	            }
-	        }(prop));
-	    }
-	    for (prop in OriginalClass) {
-	        if (prop !== 'prototype' && OriginalClass.hasOwnProperty(prop)) {
-	            _global$1[className][prop] = OriginalClass[prop];
-	        }
-	    }
-	}
-	
-	function createNamedFn(name, delegate) {
-	    try {
-	        return (Function('f', "return function " + name + "(){return f(this, arguments)}"))(delegate);
-	    }
-	    catch (e) {
-	        // if we fail, we must be CSP, just return delegate.
-	        return function () {
-	            return delegate(this, arguments);
-	        };
-	    }
-	}
-	function patchMethod(target, name, patchFn) {
-	    var proto = target;
-	    while (proto && Object.getOwnPropertyNames(proto).indexOf(name) === -1) {
-	        proto = Object.getPrototypeOf(proto);
-	    }
-	    if (!proto && target[name]) {
-	        // somehow we did not find it, but we can see it. This happens on IE for Window properties.
-	        proto = target;
-	    }
-	    var delegateName = zoneSymbol(name);
-	    var delegate;
-	    if (proto && !(delegate = proto[delegateName])) {
-	        delegate = proto[delegateName] = proto[name];
-	        proto[name] = createNamedFn(name, patchFn(delegate, delegateName, name));
-	    }
-	    return delegate;
-	}
-	
-	/**
-	 * @license
-	 * Copyright Google Inc. All Rights Reserved.
-	 *
-	 * Use of this source code is governed by an MIT-style license that can be
-	 * found in the LICENSE file at https://angular.io/license
-	 */
-	function patchTimer(window, setName, cancelName, nameSuffix) {
-	    var setNative = null;
-	    var clearNative = null;
-	    setName += nameSuffix;
-	    cancelName += nameSuffix;
-	    var tasksByHandleId = {};
-	    function scheduleTask(task) {
-	        var data = task.data;
-	        data.args[0] = function () {
-	            task.invoke.apply(this, arguments);
-	            delete tasksByHandleId[data.handleId];
-	        };
-	        data.handleId = setNative.apply(window, data.args);
-	        tasksByHandleId[data.handleId] = task;
-	        return task;
-	    }
-	    function clearTask(task) {
-	        delete tasksByHandleId[task.data.handleId];
-	        return clearNative(task.data.handleId);
-	    }
-	    setNative =
-	        patchMethod(window, setName, function (delegate) { return function (self, args) {
-	            if (typeof args[0] === 'function') {
-	                var zone = Zone.current;
-	                var options = {
-	                    handleId: null,
-	                    isPeriodic: nameSuffix === 'Interval',
-	                    delay: (nameSuffix === 'Timeout' || nameSuffix === 'Interval') ? args[1] || 0 : null,
-	                    args: args
-	                };
-	                var task = zone.scheduleMacroTask(setName, args[0], options, scheduleTask, clearTask);
-	                if (!task) {
-	                    return task;
-	                }
-	                // Node.js must additionally support the ref and unref functions.
-	                var handle = task.data.handleId;
-	                if (handle.ref && handle.unref) {
-	                    task.ref = handle.ref.bind(handle);
-	                    task.unref = handle.unref.bind(handle);
-	                }
-	                return task;
-	            }
-	            else {
-	                // cause an error by calling it directly.
-	                return delegate.apply(window, args);
-	            }
-	        }; });
-	    clearNative =
-	        patchMethod(window, cancelName, function (delegate) { return function (self, args) {
-	            var task = typeof args[0] === 'number' ? tasksByHandleId[args[0]] : args[0];
-	            if (task && typeof task.type === 'string') {
-	                if (task.cancelFn && task.data.isPeriodic || task.runCount === 0) {
-	                    // Do not cancel already canceled functions
-	                    task.zone.cancelTask(task);
-	                }
-	            }
-	            else {
-	                // cause an error by calling it directly.
-	                delegate.apply(window, args);
-	            }
-	        }; });
-	}
-	
-	/**
-	 * @license
-	 * Copyright Google Inc. All Rights Reserved.
-	 *
-	 * Use of this source code is governed by an MIT-style license that can be
-	 * found in the LICENSE file at https://angular.io/license
-	 */
-	/*
-	 * This is necessary for Chrome and Chrome mobile, to enable
-	 * things like redefining `createdCallback` on an element.
-	 */
-	var _defineProperty = Object[zoneSymbol('defineProperty')] = Object.defineProperty;
-	var _getOwnPropertyDescriptor = Object[zoneSymbol('getOwnPropertyDescriptor')] =
-	    Object.getOwnPropertyDescriptor;
-	var _create = Object.create;
-	var unconfigurablesKey = zoneSymbol('unconfigurables');
-	function propertyPatch() {
-	    Object.defineProperty = function (obj, prop, desc) {
-	        if (isUnconfigurable(obj, prop)) {
-	            throw new TypeError('Cannot assign to read only property \'' + prop + '\' of ' + obj);
-	        }
-	        var originalConfigurableFlag = desc.configurable;
-	        if (prop !== 'prototype') {
-	            desc = rewriteDescriptor(obj, prop, desc);
-	        }
-	        return _tryDefineProperty(obj, prop, desc, originalConfigurableFlag);
-	    };
-	    Object.defineProperties = function (obj, props) {
-	        Object.keys(props).forEach(function (prop) {
-	            Object.defineProperty(obj, prop, props[prop]);
-	        });
-	        return obj;
-	    };
-	    Object.create = function (obj, proto) {
-	        if (typeof proto === 'object' && !Object.isFrozen(proto)) {
-	            Object.keys(proto).forEach(function (prop) {
-	                proto[prop] = rewriteDescriptor(obj, prop, proto[prop]);
-	            });
-	        }
-	        return _create(obj, proto);
-	    };
-	    Object.getOwnPropertyDescriptor = function (obj, prop) {
-	        var desc = _getOwnPropertyDescriptor(obj, prop);
-	        if (isUnconfigurable(obj, prop)) {
-	            desc.configurable = false;
-	        }
-	        return desc;
-	    };
-	}
-	
-	function _redefineProperty(obj, prop, desc) {
-	    var originalConfigurableFlag = desc.configurable;
-	    desc = rewriteDescriptor(obj, prop, desc);
-	    return _tryDefineProperty(obj, prop, desc, originalConfigurableFlag);
-	}
-	
-	function isUnconfigurable(obj, prop) {
-	    return obj && obj[unconfigurablesKey] && obj[unconfigurablesKey][prop];
-	}
-	function rewriteDescriptor(obj, prop, desc) {
-	    desc.configurable = true;
-	    if (!desc.configurable) {
-	        if (!obj[unconfigurablesKey]) {
-	            _defineProperty(obj, unconfigurablesKey, { writable: true, value: {} });
-	        }
-	        obj[unconfigurablesKey][prop] = true;
-	    }
-	    return desc;
-	}
-	function _tryDefineProperty(obj, prop, desc, originalConfigurableFlag) {
-	    try {
-	        return _defineProperty(obj, prop, desc);
-	    }
-	    catch (e) {
-	        if (desc.configurable) {
-	            // In case of errors, when the configurable flag was likely set by rewriteDescriptor(), let's
-	            // retry with the original flag value
-	            if (typeof originalConfigurableFlag == 'undefined') {
-	                delete desc.configurable;
-	            }
-	            else {
-	                desc.configurable = originalConfigurableFlag;
-	            }
-	            try {
-	                return _defineProperty(obj, prop, desc);
-	            }
-	            catch (e) {
-	                var descJson = null;
-	                try {
-	                    descJson = JSON.stringify(desc);
-	                }
-	                catch (e) {
-	                    descJson = descJson.toString();
-	                }
-	                console.log("Attempting to configure '" + prop + "' with descriptor '" + descJson + "' on object '" + obj + "' and got error, giving up: " + e);
-	            }
-	        }
-	        else {
-	            throw e;
-	        }
-	    }
-	}
-	
-	/**
-	 * @license
-	 * Copyright Google Inc. All Rights Reserved.
-	 *
-	 * Use of this source code is governed by an MIT-style license that can be
-	 * found in the LICENSE file at https://angular.io/license
-	 */
-	var WTF_ISSUE_555 = 'Anchor,Area,Audio,BR,Base,BaseFont,Body,Button,Canvas,Content,DList,Directory,Div,Embed,FieldSet,Font,Form,Frame,FrameSet,HR,Head,Heading,Html,IFrame,Image,Input,Keygen,LI,Label,Legend,Link,Map,Marquee,Media,Menu,Meta,Meter,Mod,OList,Object,OptGroup,Option,Output,Paragraph,Pre,Progress,Quote,Script,Select,Source,Span,Style,TableCaption,TableCell,TableCol,Table,TableRow,TableSection,TextArea,Title,Track,UList,Unknown,Video';
-	var NO_EVENT_TARGET = 'ApplicationCache,EventSource,FileReader,InputMethodContext,MediaController,MessagePort,Node,Performance,SVGElementInstance,SharedWorker,TextTrack,TextTrackCue,TextTrackList,WebKitNamedFlow,Window,Worker,WorkerGlobalScope,XMLHttpRequest,XMLHttpRequestEventTarget,XMLHttpRequestUpload,IDBRequest,IDBOpenDBRequest,IDBDatabase,IDBTransaction,IDBCursor,DBIndex'
-	    .split(',');
-	var EVENT_TARGET = 'EventTarget';
-	function eventTargetPatch(_global) {
-	    var apis = [];
-	    var isWtf = _global['wtf'];
-	    if (isWtf) {
-	        // Workaround for: https://github.com/google/tracing-framework/issues/555
-	        apis = WTF_ISSUE_555.split(',').map(function (v) { return 'HTML' + v + 'Element'; }).concat(NO_EVENT_TARGET);
-	    }
-	    else if (_global[EVENT_TARGET]) {
-	        apis.push(EVENT_TARGET);
-	    }
-	    else {
-	        // Note: EventTarget is not available in all browsers,
-	        // if it's not available, we instead patch the APIs in the IDL that inherit from EventTarget
-	        apis = NO_EVENT_TARGET;
-	    }
-	    for (var i = 0; i < apis.length; i++) {
-	        var type = _global[apis[i]];
-	        patchEventTargetMethods(type && type.prototype);
-	    }
-	}
-	
-	/**
-	 * @license
-	 * Copyright Google Inc. All Rights Reserved.
-	 *
-	 * Use of this source code is governed by an MIT-style license that can be
-	 * found in the LICENSE file at https://angular.io/license
-	 */
-	// we have to patch the instance since the proto is non-configurable
-	function apply(_global) {
-	    var WS = _global.WebSocket;
-	    // On Safari window.EventTarget doesn't exist so need to patch WS add/removeEventListener
-	    // On older Chrome, no need since EventTarget was already patched
-	    if (!_global.EventTarget) {
-	        patchEventTargetMethods(WS.prototype);
-	    }
-	    _global.WebSocket = function (a, b) {
-	        var socket = arguments.length > 1 ? new WS(a, b) : new WS(a);
-	        var proxySocket;
-	        // Safari 7.0 has non-configurable own 'onmessage' and friends properties on the socket instance
-	        var onmessageDesc = Object.getOwnPropertyDescriptor(socket, 'onmessage');
-	        if (onmessageDesc && onmessageDesc.configurable === false) {
-	            proxySocket = Object.create(socket);
-	            ['addEventListener', 'removeEventListener', 'send', 'close'].forEach(function (propName) {
-	                proxySocket[propName] = function () {
-	                    return socket[propName].apply(socket, arguments);
-	                };
-	            });
-	        }
-	        else {
-	            // we can patch the real socket
-	            proxySocket = socket;
-	        }
-	        patchOnProperties(proxySocket, ['close', 'error', 'message', 'open']);
-	        return proxySocket;
-	    };
-	    for (var prop in WS) {
-	        _global.WebSocket[prop] = WS[prop];
-	    }
-	}
-	
-	/**
-	 * @license
-	 * Copyright Google Inc. All Rights Reserved.
-	 *
-	 * Use of this source code is governed by an MIT-style license that can be
-	 * found in the LICENSE file at https://angular.io/license
-	 */
-	var eventNames = 'copy cut paste abort blur focus canplay canplaythrough change click contextmenu dblclick drag dragend dragenter dragleave dragover dragstart drop durationchange emptied ended input invalid keydown keypress keyup load loadeddata loadedmetadata loadstart message mousedown mouseenter mouseleave mousemove mouseout mouseover mouseup pause play playing progress ratechange reset scroll seeked seeking select show stalled submit suspend timeupdate volumechange waiting mozfullscreenchange mozfullscreenerror mozpointerlockchange mozpointerlockerror error webglcontextrestored webglcontextlost webglcontextcreationerror'
-	    .split(' ');
-	function propertyDescriptorPatch(_global) {
-	    if (isNode) {
-	        return;
-	    }
-	    var supportsWebSocket = typeof WebSocket !== 'undefined';
-	    if (canPatchViaPropertyDescriptor()) {
-	        // for browsers that we can patch the descriptor:  Chrome & Firefox
-	        if (isBrowser) {
-	            patchOnProperties(HTMLElement.prototype, eventNames);
-	        }
-	        patchOnProperties(XMLHttpRequest.prototype, null);
-	        if (typeof IDBIndex !== 'undefined') {
-	            patchOnProperties(IDBIndex.prototype, null);
-	            patchOnProperties(IDBRequest.prototype, null);
-	            patchOnProperties(IDBOpenDBRequest.prototype, null);
-	            patchOnProperties(IDBDatabase.prototype, null);
-	            patchOnProperties(IDBTransaction.prototype, null);
-	            patchOnProperties(IDBCursor.prototype, null);
-	        }
-	        if (supportsWebSocket) {
-	            patchOnProperties(WebSocket.prototype, null);
-	        }
-	    }
-	    else {
-	        // Safari, Android browsers (Jelly Bean)
-	        patchViaCapturingAllTheEvents();
-	        patchClass('XMLHttpRequest');
-	        if (supportsWebSocket) {
-	            apply(_global);
-	        }
-	    }
-	}
-	function canPatchViaPropertyDescriptor() {
-	    if (isBrowser && !Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'onclick') &&
-	        typeof Element !== 'undefined') {
-	        // WebKit https://bugs.webkit.org/show_bug.cgi?id=134364
-	        // IDL interface attributes are not configurable
-	        var desc = Object.getOwnPropertyDescriptor(Element.prototype, 'onclick');
-	        if (desc && !desc.configurable)
-	            return false;
-	    }
-	    Object.defineProperty(XMLHttpRequest.prototype, 'onreadystatechange', {
-	        get: function () {
-	            return true;
-	        }
-	    });
-	    var req = new XMLHttpRequest();
-	    var result = !!req.onreadystatechange;
-	    Object.defineProperty(XMLHttpRequest.prototype, 'onreadystatechange', {});
-	    return result;
-	}
-	
-	var unboundKey = zoneSymbol('unbound');
-	// Whenever any eventListener fires, we check the eventListener target and all parents
-	// for `onwhatever` properties and replace them with zone-bound functions
-	// - Chrome (for now)
-	function patchViaCapturingAllTheEvents() {
-	    var _loop_1 = function(i) {
-	        var property = eventNames[i];
-	        var onproperty = 'on' + property;
-	        self.addEventListener(property, function (event) {
-	            var elt = event.target, bound, source;
-	            if (elt) {
-	                source = elt.constructor['name'] + '.' + onproperty;
-	            }
-	            else {
-	                source = 'unknown.' + onproperty;
-	            }
-	            while (elt) {
-	                if (elt[onproperty] && !elt[onproperty][unboundKey]) {
-	                    bound = Zone.current.wrap(elt[onproperty], source);
-	                    bound[unboundKey] = elt[onproperty];
-	                    elt[onproperty] = bound;
-	                }
-	                elt = elt.parentElement;
-	            }
-	        }, true);
-	    };
-	    for (var i = 0; i < eventNames.length; i++) {
-	        _loop_1(i);
-	    }
-	    
-	}
-	
-	/**
-	 * @license
-	 * Copyright Google Inc. All Rights Reserved.
-	 *
-	 * Use of this source code is governed by an MIT-style license that can be
-	 * found in the LICENSE file at https://angular.io/license
-	 */
-	function registerElementPatch(_global) {
-	    if (!isBrowser || !('registerElement' in _global.document)) {
-	        return;
-	    }
-	    var _registerElement = document.registerElement;
-	    var callbacks = ['createdCallback', 'attachedCallback', 'detachedCallback', 'attributeChangedCallback'];
-	    document.registerElement = function (name, opts) {
-	        if (opts && opts.prototype) {
-	            callbacks.forEach(function (callback) {
-	                var source = 'Document.registerElement::' + callback;
-	                if (opts.prototype.hasOwnProperty(callback)) {
-	                    var descriptor = Object.getOwnPropertyDescriptor(opts.prototype, callback);
-	                    if (descriptor && descriptor.value) {
-	                        descriptor.value = Zone.current.wrap(descriptor.value, source);
-	                        _redefineProperty(opts.prototype, callback, descriptor);
-	                    }
-	                    else {
-	                        opts.prototype[callback] = Zone.current.wrap(opts.prototype[callback], source);
-	                    }
-	                }
-	                else if (opts.prototype[callback]) {
-	                    opts.prototype[callback] = Zone.current.wrap(opts.prototype[callback], source);
-	                }
-	            });
-	        }
-	        return _registerElement.apply(document, [name, opts]);
-	    };
-	}
-	
-	/**
-	 * @license
-	 * Copyright Google Inc. All Rights Reserved.
-	 *
-	 * Use of this source code is governed by an MIT-style license that can be
-	 * found in the LICENSE file at https://angular.io/license
-	 */
-	var set = 'set';
-	var clear = 'clear';
-	var blockingMethods = ['alert', 'prompt', 'confirm'];
-	var _global = typeof window === 'object' && window || typeof self === 'object' && self || global;
-	patchTimer(_global, set, clear, 'Timeout');
-	patchTimer(_global, set, clear, 'Interval');
-	patchTimer(_global, set, clear, 'Immediate');
-	patchTimer(_global, 'request', 'cancel', 'AnimationFrame');
-	patchTimer(_global, 'mozRequest', 'mozCancel', 'AnimationFrame');
-	patchTimer(_global, 'webkitRequest', 'webkitCancel', 'AnimationFrame');
-	for (var i = 0; i < blockingMethods.length; i++) {
-	    var name = blockingMethods[i];
-	    patchMethod(_global, name, function (delegate, symbol, name) {
-	        return function (s, args) {
-	            return Zone.current.run(delegate, _global, args, name);
-	        };
-	    });
-	}
-	eventTargetPatch(_global);
-	propertyDescriptorPatch(_global);
-	patchClass('MutationObserver');
-	patchClass('WebKitMutationObserver');
-	patchClass('FileReader');
-	propertyPatch();
-	registerElementPatch(_global);
-	// Treat XMLHTTPRequest as a macrotask.
-	patchXHR(_global);
-	var XHR_TASK = zoneSymbol('xhrTask');
-	var XHR_SYNC = zoneSymbol('xhrSync');
-	function patchXHR(window) {
-	    function findPendingTask(target) {
-	        var pendingTask = target[XHR_TASK];
-	        return pendingTask;
-	    }
-	    function scheduleTask(task) {
-	        var data = task.data;
-	        data.target.addEventListener('readystatechange', function () {
-	            if (data.target.readyState === data.target.DONE) {
-	                if (!data.aborted) {
-	                    task.invoke();
-	                }
-	            }
-	        });
-	        var storedTask = data.target[XHR_TASK];
-	        if (!storedTask) {
-	            data.target[XHR_TASK] = task;
-	        }
-	        sendNative.apply(data.target, data.args);
-	        return task;
-	    }
-	    function placeholderCallback() { }
-	    function clearTask(task) {
-	        var data = task.data;
-	        // Note - ideally, we would call data.target.removeEventListener here, but it's too late
-	        // to prevent it from firing. So instead, we store info for the event listener.
-	        data.aborted = true;
-	        return abortNative.apply(data.target, data.args);
-	    }
-	    var openNative = patchMethod(window.XMLHttpRequest.prototype, 'open', function () { return function (self, args) {
-	        self[XHR_SYNC] = args[2] == false;
-	        return openNative.apply(self, args);
-	    }; });
-	    var sendNative = patchMethod(window.XMLHttpRequest.prototype, 'send', function () { return function (self, args) {
-	        var zone = Zone.current;
-	        if (self[XHR_SYNC]) {
-	            // if the XHR is sync there is no task to schedule, just execute the code.
-	            return sendNative.apply(self, args);
-	        }
-	        else {
-	            var options = { target: self, isPeriodic: false, delay: null, args: args, aborted: false };
-	            return zone.scheduleMacroTask('XMLHttpRequest.send', placeholderCallback, options, scheduleTask, clearTask);
-	        }
-	    }; });
-	    var abortNative = patchMethod(window.XMLHttpRequest.prototype, 'abort', function (delegate) { return function (self, args) {
-	        var task = findPendingTask(self);
-	        if (task && typeof task.type == 'string') {
-	            // If the XHR has already completed, do nothing.
-	            if (task.cancelFn == null) {
-	                return;
-	            }
-	            task.zone.cancelTask(task);
-	        }
-	        // Otherwise, we are trying to abort an XHR which has not yet been sent, so there is no task
-	        // to cancel. Do nothing.
-	    }; });
-	}
-	/// GEO_LOCATION
-	if (_global['navigator'] && _global['navigator'].geolocation) {
-	    patchPrototype(_global['navigator'].geolocation, ['getCurrentPosition', 'watchPosition']);
-	}
-	
-	})));
-	
-	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }()), __webpack_require__(30)))
+	module.exports = "<div class=\"header row center-xs\"><div class=\"header__offset row\"><div class=\"col-xs-3 row start-xs middle-xs\"><img src=\"images/logo.png\" alt=\"Hmm...\" class=\"header__logo\"></div><div class=\"col-xs-6 row start-xs middle-xs\"><i aria-hidden=\"true\" class=\"header__search-icon fa fa-search\"></i><input type=\"text\" placeholder=\"Search...\" class=\"header__search-bar\"><a href=\"#\" class=\"header__action-buttons\"><i aria-hidden=\"true\" class=\"fa fa-bell-o\"></i></a><a href=\"#\" class=\"header__action-buttons\"><i aria-hidden=\"true\" class=\"fa fa-music\"></i></a></div><div class=\"col-xs-3 row end-xs\"><a routerLink=\"/profile\" class=\"header__profile-button row middle-xs\"><strong class=\"header__user-name\">Oleg</strong><img src=\"http://placehold.it/50x50\" alt=\"Avatar\" class=\"header__avatar\"></a></div></div></div>"
 
 /***/ },
 /* 35 */
 /***/ function(module, exports) {
 
-	/* WEBPACK VAR INJECTION */(function(global) {/*! *****************************************************************************
-	Copyright (C) Microsoft. All rights reserved.
-	Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-	this file except in compliance with the License. You may obtain a copy of the
-	License at http://www.apache.org/licenses/LICENSE-2.0
+	module.exports = ".header {\n  background-color: #F57F62;\n  height: 60px;\n  width: 100%;\n  margin: 0 !important; }\n\n.header__offset {\n  height: 100%;\n  width: 1000px; }\n\n.header__logo {\n  height: 18px; }\n\n.header__search-icon {\n  font-size: 23px;\n  color: white; }\n\n.header__search-bar {\n  font-family: Roboto-Medium;\n  border: none;\n  border-radius: 100px;\n  height: 35px;\n  margin: 0 10px 0 10px;\n  color: white;\n  padding-left: 15px;\n  background-color: #F5937A; }\n\n.header__search-bar::-webkit-input-placeholder {\n  color: white; }\n\n.header__search-bar:focus {\n  background-color: white;\n  color: #F5937A;\n  outline: none; }\n\n.header__action-buttons {\n  margin-left: 10px;\n  color: white;\n  font-size: 23px;\n  height: 100%;\n  line-height: 60px;\n  width: 60px;\n  text-align: center; }\n\n.header__action-buttons:hover {\n  background-color: #F5937A; }\n\n.header__profile-button {\n  font-family: Roboto-Light;\n  letter-spacing: 1px;\n  padding: 0 20px;\n  color: white;\n  text-decoration: none; }\n\n.header__profile-button:hover {\n  background-color: #F5937A; }\n\n.header__avatar {\n  border-radius: 100px;\n  width: 40px;\n  height: 40px; }\n\n.header__user-name {\n  margin-right: 15px; }\n"
+
+/***/ },
+/* 36 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+	    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+	    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+	    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+	    return c > 3 && r && Object.defineProperty(target, key, r), r;
+	};
+	var __metadata = (this && this.__metadata) || function (k, v) {
+	    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+	};
+	var core_1 = __webpack_require__(10);
+	var ProfileComponent = (function () {
+	    function ProfileComponent() {
+	    }
+	    return ProfileComponent;
+	}());
+	ProfileComponent = __decorate([
+	    core_1.Component({
+	        selector: 'profile-component',
+	        template: __webpack_require__(70)
+	    }),
+	    __metadata("design:paramtypes", [])
+	], ProfileComponent);
+	exports.ProfileComponent = ProfileComponent;
+
+
+/***/ },
+/* 37 */
+/***/ function(module, exports, __webpack_require__) {
+
+	/**
+	 * @license @angular/router v3.0.0
+	 * (c) 2010-2016 Google, Inc. https://angular.io/
+	 * License: MIT
+	 */
+	(function (global, factory) {
+	     true ? factory(exports, __webpack_require__(29), __webpack_require__(10), __webpack_require__(11), __webpack_require__(38), __webpack_require__(51), __webpack_require__(52), __webpack_require__(53), __webpack_require__(54), __webpack_require__(58), __webpack_require__(59), __webpack_require__(12), __webpack_require__(60), __webpack_require__(61), __webpack_require__(62), __webpack_require__(63), __webpack_require__(64), __webpack_require__(65), __webpack_require__(66)) :
+	    typeof define === 'function' && define.amd ? define(['exports', '@angular/common', '@angular/core', 'rxjs/Subject', 'rxjs/observable/from', 'rxjs/observable/of', 'rxjs/operator/every', 'rxjs/operator/map', 'rxjs/operator/mergeAll', 'rxjs/operator/mergeMap', 'rxjs/operator/reduce', 'rxjs/Observable', 'rxjs/operator/catch', 'rxjs/operator/concatAll', 'rxjs/operator/first', 'rxjs/util/EmptyError', 'rxjs/observable/fromPromise', 'rxjs/operator/last', 'rxjs/BehaviorSubject'], factory) :
+	    (factory((global.ng = global.ng || {}, global.ng.router = global.ng.router || {}),global.ng.common,global.ng.core,global.Rx,global.Rx.Observable,global.Rx.Observable,global.Rx.Observable.prototype,global.Rx.Observable.prototype,global.Rx.Observable.prototype,global.Rx.Observable.prototype,global.Rx.Observable.prototype,global.Rx,global.Rx.Observable.prototype,global.Rx.Observable.prototype,global.Rx.Observable.prototype,global.Rx,global.Rx.Observable,global.Rx.Observable.prototype,global.Rx));
+	}(this, function (exports,_angular_common,_angular_core,rxjs_Subject,rxjs_observable_from,rxjs_observable_of,rxjs_operator_every,rxjs_operator_map,rxjs_operator_mergeAll,rxjs_operator_mergeMap,rxjs_operator_reduce,rxjs_Observable,rxjs_operator_catch,rxjs_operator_concatAll,rxjs_operator_first,rxjs_util_EmptyError,rxjs_observable_fromPromise,l,rxjs_BehaviorSubject) { 'use strict';
 	
-	THIS CODE IS PROVIDED ON AN *AS IS* BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-	KIND, EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED
-	WARRANTIES OR CONDITIONS OF TITLE, FITNESS FOR A PARTICULAR PURPOSE,
-	MERCHANTABLITY OR NON-INFRINGEMENT.
+	    /**
+	     * @license
+	     * Copyright Google Inc. All Rights Reserved.
+	     *
+	     * Use of this source code is governed by an MIT-style license that can be
+	     * found in the LICENSE file at https://angular.io/license
+	     */
+	    var __extends = (this && this.__extends) || function (d, b) {
+	        for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	        function __() { this.constructor = d; }
+	        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	    };
+	    /**
+	     * @whatItDoes Name of the primary outlet.
+	     *
+	     * @stable
+	     */
+	    var PRIMARY_OUTLET = 'primary';
+	    var NavigationCancelingError = (function (_super) {
+	        __extends(NavigationCancelingError, _super);
+	        function NavigationCancelingError(message) {
+	            _super.call(this, message);
+	            this.message = message;
+	            this.stack = (new Error(message)).stack;
+	        }
+	        NavigationCancelingError.prototype.toString = function () { return this.message; };
+	        return NavigationCancelingError;
+	    }(Error));
 	
-	See the Apache Version 2.0 License for specific language governing permissions
-	and limitations under the License.
-	***************************************************************************** */
-	var Reflect;
-	(function (Reflect) {
-	    "use strict";
-	    var hasOwn = Object.prototype.hasOwnProperty;
-	    // feature test for Object.create support
-	    var supportsCreate = typeof Object.create === "function";
-	    // feature test for __proto__ support
-	    var supportsProto = { __proto__: [] } instanceof Array;
-	    // feature test for Symbol support
-	    var supportsSymbol = typeof Symbol === "function";
-	    var toPrimitiveSymbol = supportsSymbol && typeof Symbol.toPrimitive !== "undefined" ? Symbol.toPrimitive : "@@toPrimitive";
-	    var iteratorSymbol = supportsSymbol && typeof Symbol.iterator !== "undefined" ? Symbol.iterator : "@@iterator";
-	    // create an object in dictionary mode (a.k.a. "slow" mode in v8)
-	    var createDictionary = supportsCreate ? function () { return MakeDictionary(Object.create(null)); } :
-	        supportsProto ? function () { return MakeDictionary({ __proto__: null }); } :
-	            function () { return MakeDictionary({}); };
-	    var HashMap;
-	    (function (HashMap) {
-	        var downLevel = !supportsCreate && !supportsProto;
-	        HashMap.has = downLevel
-	            ? function (map, key) { return hasOwn.call(map, key); }
-	            : function (map, key) { return key in map; };
-	        HashMap.get = downLevel
-	            ? function (map, key) { return hasOwn.call(map, key) ? map[key] : undefined; }
-	            : function (map, key) { return map[key]; };
-	    })(HashMap || (HashMap = {}));
-	    // Load global or shim versions of Map, Set, and WeakMap
-	    var functionPrototype = Object.getPrototypeOf(Function);
-	    var _Map = typeof Map === "function" && typeof Map.prototype.entries === "function" ? Map : CreateMapPolyfill();
-	    var _Set = typeof Set === "function" && typeof Set.prototype.entries === "function" ? Set : CreateSetPolyfill();
-	    var _WeakMap = typeof WeakMap === "function" ? WeakMap : CreateWeakMapPolyfill();
-	    // [[Metadata]] internal slot
-	    var Metadata = new _WeakMap();
-	    /**
-	      * Applies a set of decorators to a property of a target object.
-	      * @param decorators An array of decorators.
-	      * @param target The target object.
-	      * @param targetKey (Optional) The property key to decorate.
-	      * @param targetDescriptor (Optional) The property descriptor for the target key
-	      * @remarks Decorators are applied in reverse order.
-	      * @example
-	      *
-	      *     class Example {
-	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
-	      *         // static staticProperty;
-	      *         // property;
-	      *
-	      *         constructor(p) { }
-	      *         static staticMethod(p) { }
-	      *         method(p) { }
-	      *     }
-	      *
-	      *     // constructor
-	      *     Example = Reflect.decorate(decoratorsArray, Example);
-	      *
-	      *     // property (on constructor)
-	      *     Reflect.decorate(decoratorsArray, Example, "staticProperty");
-	      *
-	      *     // property (on prototype)
-	      *     Reflect.decorate(decoratorsArray, Example.prototype, "property");
-	      *
-	      *     // method (on constructor)
-	      *     Object.defineProperty(Example, "staticMethod",
-	      *         Reflect.decorate(decoratorsArray, Example, "staticMethod",
-	      *             Object.getOwnPropertyDescriptor(Example, "staticMethod")));
-	      *
-	      *     // method (on prototype)
-	      *     Object.defineProperty(Example.prototype, "method",
-	      *         Reflect.decorate(decoratorsArray, Example.prototype, "method",
-	      *             Object.getOwnPropertyDescriptor(Example.prototype, "method")));
-	      *
-	      */
-	    function decorate(decorators, target, targetKey, targetDescriptor) {
-	        if (!IsUndefined(targetKey)) {
-	            if (!IsArray(decorators))
-	                throw new TypeError();
-	            if (!IsObject(target))
-	                throw new TypeError();
-	            if (!IsObject(targetDescriptor) && !IsUndefined(targetDescriptor) && !IsNull(targetDescriptor))
-	                throw new TypeError();
-	            if (IsNull(targetDescriptor))
-	                targetDescriptor = undefined;
-	            targetKey = ToPropertyKey(targetKey);
-	            return DecorateProperty(decorators, target, targetKey, targetDescriptor);
-	        }
-	        else {
-	            if (!IsArray(decorators))
-	                throw new TypeError();
-	            if (!IsConstructor(target))
-	                throw new TypeError();
-	            return DecorateConstructor(decorators, target);
-	        }
-	    }
-	    Reflect.decorate = decorate;
-	    /**
-	      * A default metadata decorator factory that can be used on a class, class member, or parameter.
-	      * @param metadataKey The key for the metadata entry.
-	      * @param metadataValue The value for the metadata entry.
-	      * @returns A decorator function.
-	      * @remarks
-	      * If `metadataKey` is already defined for the target and target key, the
-	      * metadataValue for that key will be overwritten.
-	      * @example
-	      *
-	      *     // constructor
-	      *     @Reflect.metadata(key, value)
-	      *     class Example {
-	      *     }
-	      *
-	      *     // property (on constructor, TypeScript only)
-	      *     class Example {
-	      *         @Reflect.metadata(key, value)
-	      *         static staticProperty;
-	      *     }
-	      *
-	      *     // property (on prototype, TypeScript only)
-	      *     class Example {
-	      *         @Reflect.metadata(key, value)
-	      *         property;
-	      *     }
-	      *
-	      *     // method (on constructor)
-	      *     class Example {
-	      *         @Reflect.metadata(key, value)
-	      *         static staticMethod() { }
-	      *     }
-	      *
-	      *     // method (on prototype)
-	      *     class Example {
-	      *         @Reflect.metadata(key, value)
-	      *         method() { }
-	      *     }
-	      *
-	      */
-	    function metadata(metadataKey, metadataValue) {
-	        function decorator(target, targetKey) {
-	            if (!IsUndefined(targetKey)) {
-	                if (!IsObject(target))
-	                    throw new TypeError();
-	                targetKey = ToPropertyKey(targetKey);
-	                OrdinaryDefineOwnMetadata(metadataKey, metadataValue, target, targetKey);
-	            }
-	            else {
-	                if (!IsConstructor(target))
-	                    throw new TypeError();
-	                OrdinaryDefineOwnMetadata(metadataKey, metadataValue, target, /*targetKey*/ undefined);
-	            }
-	        }
-	        return decorator;
-	    }
-	    Reflect.metadata = metadata;
-	    /**
-	      * Define a unique metadata entry on the target.
-	      * @param metadataKey A key used to store and retrieve metadata.
-	      * @param metadataValue A value that contains attached metadata.
-	      * @param target The target object on which to define metadata.
-	      * @param targetKey (Optional) The property key for the target.
-	      * @example
-	      *
-	      *     class Example {
-	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
-	      *         // static staticProperty;
-	      *         // property;
-	      *
-	      *         constructor(p) { }
-	      *         static staticMethod(p) { }
-	      *         method(p) { }
-	      *     }
-	      *
-	      *     // constructor
-	      *     Reflect.defineMetadata("custom:annotation", options, Example);
-	      *
-	      *     // property (on constructor)
-	      *     Reflect.defineMetadata("custom:annotation", options, Example, "staticProperty");
-	      *
-	      *     // property (on prototype)
-	      *     Reflect.defineMetadata("custom:annotation", options, Example.prototype, "property");
-	      *
-	      *     // method (on constructor)
-	      *     Reflect.defineMetadata("custom:annotation", options, Example, "staticMethod");
-	      *
-	      *     // method (on prototype)
-	      *     Reflect.defineMetadata("custom:annotation", options, Example.prototype, "method");
-	      *
-	      *     // decorator factory as metadata-producing annotation.
-	      *     function MyAnnotation(options): Decorator {
-	      *         return (target, key?) => Reflect.defineMetadata("custom:annotation", options, target, key);
-	      *     }
-	      *
-	      */
-	    function defineMetadata(metadataKey, metadataValue, target, targetKey) {
-	        if (!IsObject(target))
-	            throw new TypeError();
-	        if (!IsUndefined(targetKey))
-	            targetKey = ToPropertyKey(targetKey);
-	        return OrdinaryDefineOwnMetadata(metadataKey, metadataValue, target, targetKey);
-	    }
-	    Reflect.defineMetadata = defineMetadata;
-	    /**
-	      * Gets a value indicating whether the target object or its prototype chain has the provided metadata key defined.
-	      * @param metadataKey A key used to store and retrieve metadata.
-	      * @param target The target object on which the metadata is defined.
-	      * @param targetKey (Optional) The property key for the target.
-	      * @returns `true` if the metadata key was defined on the target object or its prototype chain; otherwise, `false`.
-	      * @example
-	      *
-	      *     class Example {
-	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
-	      *         // static staticProperty;
-	      *         // property;
-	      *
-	      *         constructor(p) { }
-	      *         static staticMethod(p) { }
-	      *         method(p) { }
-	      *     }
-	      *
-	      *     // constructor
-	      *     result = Reflect.hasMetadata("custom:annotation", Example);
-	      *
-	      *     // property (on constructor)
-	      *     result = Reflect.hasMetadata("custom:annotation", Example, "staticProperty");
-	      *
-	      *     // property (on prototype)
-	      *     result = Reflect.hasMetadata("custom:annotation", Example.prototype, "property");
-	      *
-	      *     // method (on constructor)
-	      *     result = Reflect.hasMetadata("custom:annotation", Example, "staticMethod");
-	      *
-	      *     // method (on prototype)
-	      *     result = Reflect.hasMetadata("custom:annotation", Example.prototype, "method");
-	      *
-	      */
-	    function hasMetadata(metadataKey, target, targetKey) {
-	        if (!IsObject(target))
-	            throw new TypeError();
-	        if (!IsUndefined(targetKey))
-	            targetKey = ToPropertyKey(targetKey);
-	        return OrdinaryHasMetadata(metadataKey, target, targetKey);
-	    }
-	    Reflect.hasMetadata = hasMetadata;
-	    /**
-	      * Gets a value indicating whether the target object has the provided metadata key defined.
-	      * @param metadataKey A key used to store and retrieve metadata.
-	      * @param target The target object on which the metadata is defined.
-	      * @param targetKey (Optional) The property key for the target.
-	      * @returns `true` if the metadata key was defined on the target object; otherwise, `false`.
-	      * @example
-	      *
-	      *     class Example {
-	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
-	      *         // static staticProperty;
-	      *         // property;
-	      *
-	      *         constructor(p) { }
-	      *         static staticMethod(p) { }
-	      *         method(p) { }
-	      *     }
-	      *
-	      *     // constructor
-	      *     result = Reflect.hasOwnMetadata("custom:annotation", Example);
-	      *
-	      *     // property (on constructor)
-	      *     result = Reflect.hasOwnMetadata("custom:annotation", Example, "staticProperty");
-	      *
-	      *     // property (on prototype)
-	      *     result = Reflect.hasOwnMetadata("custom:annotation", Example.prototype, "property");
-	      *
-	      *     // method (on constructor)
-	      *     result = Reflect.hasOwnMetadata("custom:annotation", Example, "staticMethod");
-	      *
-	      *     // method (on prototype)
-	      *     result = Reflect.hasOwnMetadata("custom:annotation", Example.prototype, "method");
-	      *
-	      */
-	    function hasOwnMetadata(metadataKey, target, targetKey) {
-	        if (!IsObject(target))
-	            throw new TypeError();
-	        if (!IsUndefined(targetKey))
-	            targetKey = ToPropertyKey(targetKey);
-	        return OrdinaryHasOwnMetadata(metadataKey, target, targetKey);
-	    }
-	    Reflect.hasOwnMetadata = hasOwnMetadata;
-	    /**
-	      * Gets the metadata value for the provided metadata key on the target object or its prototype chain.
-	      * @param metadataKey A key used to store and retrieve metadata.
-	      * @param target The target object on which the metadata is defined.
-	      * @param targetKey (Optional) The property key for the target.
-	      * @returns The metadata value for the metadata key if found; otherwise, `undefined`.
-	      * @example
-	      *
-	      *     class Example {
-	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
-	      *         // static staticProperty;
-	      *         // property;
-	      *
-	      *         constructor(p) { }
-	      *         static staticMethod(p) { }
-	      *         method(p) { }
-	      *     }
-	      *
-	      *     // constructor
-	      *     result = Reflect.getMetadata("custom:annotation", Example);
-	      *
-	      *     // property (on constructor)
-	      *     result = Reflect.getMetadata("custom:annotation", Example, "staticProperty");
-	      *
-	      *     // property (on prototype)
-	      *     result = Reflect.getMetadata("custom:annotation", Example.prototype, "property");
-	      *
-	      *     // method (on constructor)
-	      *     result = Reflect.getMetadata("custom:annotation", Example, "staticMethod");
-	      *
-	      *     // method (on prototype)
-	      *     result = Reflect.getMetadata("custom:annotation", Example.prototype, "method");
-	      *
-	      */
-	    function getMetadata(metadataKey, target, targetKey) {
-	        if (!IsObject(target))
-	            throw new TypeError();
-	        if (!IsUndefined(targetKey))
-	            targetKey = ToPropertyKey(targetKey);
-	        return OrdinaryGetMetadata(metadataKey, target, targetKey);
-	    }
-	    Reflect.getMetadata = getMetadata;
-	    /**
-	      * Gets the metadata value for the provided metadata key on the target object.
-	      * @param metadataKey A key used to store and retrieve metadata.
-	      * @param target The target object on which the metadata is defined.
-	      * @param targetKey (Optional) The property key for the target.
-	      * @returns The metadata value for the metadata key if found; otherwise, `undefined`.
-	      * @example
-	      *
-	      *     class Example {
-	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
-	      *         // static staticProperty;
-	      *         // property;
-	      *
-	      *         constructor(p) { }
-	      *         static staticMethod(p) { }
-	      *         method(p) { }
-	      *     }
-	      *
-	      *     // constructor
-	      *     result = Reflect.getOwnMetadata("custom:annotation", Example);
-	      *
-	      *     // property (on constructor)
-	      *     result = Reflect.getOwnMetadata("custom:annotation", Example, "staticProperty");
-	      *
-	      *     // property (on prototype)
-	      *     result = Reflect.getOwnMetadata("custom:annotation", Example.prototype, "property");
-	      *
-	      *     // method (on constructor)
-	      *     result = Reflect.getOwnMetadata("custom:annotation", Example, "staticMethod");
-	      *
-	      *     // method (on prototype)
-	      *     result = Reflect.getOwnMetadata("custom:annotation", Example.prototype, "method");
-	      *
-	      */
-	    function getOwnMetadata(metadataKey, target, targetKey) {
-	        if (!IsObject(target))
-	            throw new TypeError();
-	        if (!IsUndefined(targetKey))
-	            targetKey = ToPropertyKey(targetKey);
-	        return OrdinaryGetOwnMetadata(metadataKey, target, targetKey);
-	    }
-	    Reflect.getOwnMetadata = getOwnMetadata;
-	    /**
-	      * Gets the metadata keys defined on the target object or its prototype chain.
-	      * @param target The target object on which the metadata is defined.
-	      * @param targetKey (Optional) The property key for the target.
-	      * @returns An array of unique metadata keys.
-	      * @example
-	      *
-	      *     class Example {
-	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
-	      *         // static staticProperty;
-	      *         // property;
-	      *
-	      *         constructor(p) { }
-	      *         static staticMethod(p) { }
-	      *         method(p) { }
-	      *     }
-	      *
-	      *     // constructor
-	      *     result = Reflect.getMetadataKeys(Example);
-	      *
-	      *     // property (on constructor)
-	      *     result = Reflect.getMetadataKeys(Example, "staticProperty");
-	      *
-	      *     // property (on prototype)
-	      *     result = Reflect.getMetadataKeys(Example.prototype, "property");
-	      *
-	      *     // method (on constructor)
-	      *     result = Reflect.getMetadataKeys(Example, "staticMethod");
-	      *
-	      *     // method (on prototype)
-	      *     result = Reflect.getMetadataKeys(Example.prototype, "method");
-	      *
-	      */
-	    function getMetadataKeys(target, targetKey) {
-	        if (!IsObject(target))
-	            throw new TypeError();
-	        if (!IsUndefined(targetKey))
-	            targetKey = ToPropertyKey(targetKey);
-	        return OrdinaryMetadataKeys(target, targetKey);
-	    }
-	    Reflect.getMetadataKeys = getMetadataKeys;
-	    /**
-	      * Gets the unique metadata keys defined on the target object.
-	      * @param target The target object on which the metadata is defined.
-	      * @param targetKey (Optional) The property key for the target.
-	      * @returns An array of unique metadata keys.
-	      * @example
-	      *
-	      *     class Example {
-	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
-	      *         // static staticProperty;
-	      *         // property;
-	      *
-	      *         constructor(p) { }
-	      *         static staticMethod(p) { }
-	      *         method(p) { }
-	      *     }
-	      *
-	      *     // constructor
-	      *     result = Reflect.getOwnMetadataKeys(Example);
-	      *
-	      *     // property (on constructor)
-	      *     result = Reflect.getOwnMetadataKeys(Example, "staticProperty");
-	      *
-	      *     // property (on prototype)
-	      *     result = Reflect.getOwnMetadataKeys(Example.prototype, "property");
-	      *
-	      *     // method (on constructor)
-	      *     result = Reflect.getOwnMetadataKeys(Example, "staticMethod");
-	      *
-	      *     // method (on prototype)
-	      *     result = Reflect.getOwnMetadataKeys(Example.prototype, "method");
-	      *
-	      */
-	    function getOwnMetadataKeys(target, targetKey) {
-	        if (!IsObject(target))
-	            throw new TypeError();
-	        if (!IsUndefined(targetKey))
-	            targetKey = ToPropertyKey(targetKey);
-	        return OrdinaryOwnMetadataKeys(target, targetKey);
-	    }
-	    Reflect.getOwnMetadataKeys = getOwnMetadataKeys;
-	    /**
-	      * Deletes the metadata entry from the target object with the provided key.
-	      * @param metadataKey A key used to store and retrieve metadata.
-	      * @param target The target object on which the metadata is defined.
-	      * @param targetKey (Optional) The property key for the target.
-	      * @returns `true` if the metadata entry was found and deleted; otherwise, false.
-	      * @example
-	      *
-	      *     class Example {
-	      *         // property declarations are not part of ES6, though they are valid in TypeScript:
-	      *         // static staticProperty;
-	      *         // property;
-	      *
-	      *         constructor(p) { }
-	      *         static staticMethod(p) { }
-	      *         method(p) { }
-	      *     }
-	      *
-	      *     // constructor
-	      *     result = Reflect.deleteMetadata("custom:annotation", Example);
-	      *
-	      *     // property (on constructor)
-	      *     result = Reflect.deleteMetadata("custom:annotation", Example, "staticProperty");
-	      *
-	      *     // property (on prototype)
-	      *     result = Reflect.deleteMetadata("custom:annotation", Example.prototype, "property");
-	      *
-	      *     // method (on constructor)
-	      *     result = Reflect.deleteMetadata("custom:annotation", Example, "staticMethod");
-	      *
-	      *     // method (on prototype)
-	      *     result = Reflect.deleteMetadata("custom:annotation", Example.prototype, "method");
-	      *
-	      */
-	    function deleteMetadata(metadataKey, target, targetKey) {
-	        // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#deletemetadata-metadatakey-p-
-	        if (!IsObject(target))
-	            throw new TypeError();
-	        if (!IsUndefined(targetKey))
-	            targetKey = ToPropertyKey(targetKey);
-	        var metadataMap = GetOrCreateMetadataMap(target, targetKey, /*create*/ false);
-	        if (IsUndefined(metadataMap))
+	    function shallowEqualArrays(a, b) {
+	        if (a.length !== b.length)
 	            return false;
-	        if (!metadataMap.delete(metadataKey))
-	            return false;
-	        if (metadataMap.size > 0)
-	            return true;
-	        var targetMetadata = Metadata.get(target);
-	        targetMetadata.delete(targetKey);
-	        if (targetMetadata.size > 0)
-	            return true;
-	        Metadata.delete(target);
+	        for (var i = 0; i < a.length; ++i) {
+	            if (!shallowEqual(a[i], b[i]))
+	                return false;
+	        }
 	        return true;
 	    }
-	    Reflect.deleteMetadata = deleteMetadata;
-	    function DecorateConstructor(decorators, target) {
-	        for (var i = decorators.length - 1; i >= 0; --i) {
-	            var decorator = decorators[i];
-	            var decorated = decorator(target);
-	            if (!IsUndefined(decorated) && !IsNull(decorated)) {
-	                if (!IsConstructor(decorated))
-	                    throw new TypeError();
-	                target = decorated;
+	    function shallowEqual(a, b) {
+	        var k1 = Object.keys(a);
+	        var k2 = Object.keys(b);
+	        if (k1.length != k2.length) {
+	            return false;
+	        }
+	        var key;
+	        for (var i = 0; i < k1.length; i++) {
+	            key = k1[i];
+	            if (a[key] !== b[key]) {
+	                return false;
+	            }
+	        }
+	        return true;
+	    }
+	    function flatten(a) {
+	        var target = [];
+	        for (var i = 0; i < a.length; ++i) {
+	            for (var j = 0; j < a[i].length; ++j) {
+	                target.push(a[i][j]);
 	            }
 	        }
 	        return target;
 	    }
-	    function DecorateProperty(decorators, target, propertyKey, descriptor) {
-	        for (var i = decorators.length - 1; i >= 0; --i) {
-	            var decorator = decorators[i];
-	            var decorated = decorator(target, propertyKey, descriptor);
-	            if (!IsUndefined(decorated) && !IsNull(decorated)) {
-	                if (!IsObject(decorated))
-	                    throw new TypeError();
-	                descriptor = decorated;
+	    function last(a) {
+	        return a.length > 0 ? a[a.length - 1] : null;
+	    }
+	    function merge(m1, m2) {
+	        var m = {};
+	        for (var attr in m1) {
+	            if (m1.hasOwnProperty(attr)) {
+	                m[attr] = m1[attr];
 	            }
 	        }
-	        return descriptor;
-	    }
-	    function GetOrCreateMetadataMap(O, P, Create) {
-	        var targetMetadata = Metadata.get(O);
-	        if (IsUndefined(targetMetadata)) {
-	            if (!Create)
-	                return undefined;
-	            targetMetadata = new _Map();
-	            Metadata.set(O, targetMetadata);
-	        }
-	        var metadataMap = targetMetadata.get(P);
-	        if (IsUndefined(metadataMap)) {
-	            if (!Create)
-	                return undefined;
-	            metadataMap = new _Map();
-	            targetMetadata.set(P, metadataMap);
-	        }
-	        return metadataMap;
-	    }
-	    // Ordinary Object Internal Methods and Internal Slots
-	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinary-object-internal-methods-and-internal-slots
-	    // OrdinaryHasMetadata(MetadataKey, O, P)
-	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinaryhasmetadata--metadatakey-o-p-
-	    function OrdinaryHasMetadata(MetadataKey, O, P) {
-	        var hasOwn = OrdinaryHasOwnMetadata(MetadataKey, O, P);
-	        if (hasOwn)
-	            return true;
-	        var parent = OrdinaryGetPrototypeOf(O);
-	        if (!IsNull(parent))
-	            return OrdinaryHasMetadata(MetadataKey, parent, P);
-	        return false;
-	    }
-	    // OrdinaryHasOwnMetadata(MetadataKey, O, P)
-	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinaryhasownmetadata--metadatakey-o-p-
-	    function OrdinaryHasOwnMetadata(MetadataKey, O, P) {
-	        var metadataMap = GetOrCreateMetadataMap(O, P, /*create*/ false);
-	        if (IsUndefined(metadataMap))
-	            return false;
-	        return ToBoolean(metadataMap.has(MetadataKey));
-	    }
-	    // OrdinaryGetMetadata(MetadataKey, O, P)
-	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinarygetmetadata--metadatakey-o-p-
-	    function OrdinaryGetMetadata(MetadataKey, O, P) {
-	        var hasOwn = OrdinaryHasOwnMetadata(MetadataKey, O, P);
-	        if (hasOwn)
-	            return OrdinaryGetOwnMetadata(MetadataKey, O, P);
-	        var parent = OrdinaryGetPrototypeOf(O);
-	        if (!IsNull(parent))
-	            return OrdinaryGetMetadata(MetadataKey, parent, P);
-	        return undefined;
-	    }
-	    // OrdinaryGetOwnMetadata(MetadataKey, O, P)
-	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinarygetownmetadata--metadatakey-o-p-
-	    function OrdinaryGetOwnMetadata(MetadataKey, O, P) {
-	        var metadataMap = GetOrCreateMetadataMap(O, P, /*create*/ false);
-	        if (IsUndefined(metadataMap))
-	            return undefined;
-	        return metadataMap.get(MetadataKey);
-	    }
-	    // OrdinaryDefineOwnMetadata(MetadataKey, MetadataValue, O, P)
-	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinarydefineownmetadata--metadatakey-metadatavalue-o-p-
-	    function OrdinaryDefineOwnMetadata(MetadataKey, MetadataValue, O, P) {
-	        var metadataMap = GetOrCreateMetadataMap(O, P, /*create*/ true);
-	        metadataMap.set(MetadataKey, MetadataValue);
-	    }
-	    // OrdinaryMetadataKeys(O, P)
-	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinarymetadatakeys--o-p-
-	    function OrdinaryMetadataKeys(O, P) {
-	        var ownKeys = OrdinaryOwnMetadataKeys(O, P);
-	        var parent = OrdinaryGetPrototypeOf(O);
-	        if (parent === null)
-	            return ownKeys;
-	        var parentKeys = OrdinaryMetadataKeys(parent, P);
-	        if (parentKeys.length <= 0)
-	            return ownKeys;
-	        if (ownKeys.length <= 0)
-	            return parentKeys;
-	        var set = new _Set();
-	        var keys = [];
-	        for (var _i = 0, ownKeys_1 = ownKeys; _i < ownKeys_1.length; _i++) {
-	            var key = ownKeys_1[_i];
-	            var hasKey = set.has(key);
-	            if (!hasKey) {
-	                set.add(key);
-	                keys.push(key);
+	        for (var attr in m2) {
+	            if (m2.hasOwnProperty(attr)) {
+	                m[attr] = m2[attr];
 	            }
 	        }
-	        for (var _a = 0, parentKeys_1 = parentKeys; _a < parentKeys_1.length; _a++) {
-	            var key = parentKeys_1[_a];
-	            var hasKey = set.has(key);
-	            if (!hasKey) {
-	                set.add(key);
-	                keys.push(key);
-	            }
-	        }
-	        return keys;
+	        return m;
 	    }
-	    // OrdinaryOwnMetadataKeys(O, P)
-	    // https://github.com/rbuckton/ReflectDecorators/blob/master/spec/metadata.md#ordinaryownmetadatakeys--o-p-
-	    function OrdinaryOwnMetadataKeys(O, P) {
-	        var metadataMap = GetOrCreateMetadataMap(O, P, /*create*/ false);
-	        var keys = [];
-	        if (IsUndefined(metadataMap))
-	            return keys;
-	        var keysObj = metadataMap.keys();
-	        var iterator = GetIterator(keysObj);
-	        while (true) {
-	            var next = IteratorStep(iterator);
-	            try {
-	                if (!next)
-	                    return keys;
-	                var nextValue = IteratorValue(next);
-	                keys.push(nextValue);
-	            }
-	            catch (e) {
-	                try {
-	                    if (next) {
-	                        next = false;
-	                        IteratorClose(iterator);
-	                    }
-	                }
-	                finally {
-	                    throw e;
-	                }
-	            }
-	            finally {
-	                if (next)
-	                    IteratorClose(iterator);
+	    function forEach(map, callback) {
+	        for (var prop in map) {
+	            if (map.hasOwnProperty(prop)) {
+	                callback(map[prop], prop);
 	            }
 	        }
 	    }
-	    // ECMAScript Specification
-	    // https://tc39.github.io/ecma262/
-	    // 6 ECMAScript Data Typ0es and Values
-	    // https://tc39.github.io/ecma262/#sec-ecmascript-data-types-and-values
-	    function Type(x) {
-	        if (x === null)
-	            return 1 /* Null */;
-	        switch (typeof x) {
-	            case "undefined": return 0 /* Undefined */;
-	            case "boolean": return 2 /* Boolean */;
-	            case "string": return 3 /* String */;
-	            case "symbol": return 4 /* Symbol */;
-	            case "number": return 5 /* Number */;
-	            case "object": return x === null ? 1 /* Null */ : 6 /* Object */;
-	            default: return 6 /* Object */;
-	        }
-	    }
-	    // 6.1.1 The Undefined Type
-	    // https://tc39.github.io/ecma262/#sec-ecmascript-language-types-undefined-type
-	    function IsUndefined(x) {
-	        return x === undefined;
-	    }
-	    // 6.1.2 The Null Type
-	    // https://tc39.github.io/ecma262/#sec-ecmascript-language-types-null-type
-	    function IsNull(x) {
-	        return x === null;
-	    }
-	    // 6.1.5 The Symbol Type
-	    // https://tc39.github.io/ecma262/#sec-ecmascript-language-types-symbol-type
-	    function IsSymbol(x) {
-	        return typeof x === "symbol";
-	    }
-	    // 6.1.7 The Object Type
-	    // https://tc39.github.io/ecma262/#sec-object-type
-	    function IsObject(x) {
-	        return typeof x === "object" ? x !== null : typeof x === "function";
-	    }
-	    // 7.1 Type Conversion
-	    // https://tc39.github.io/ecma262/#sec-type-conversion
-	    // 7.1.1 ToPrimitive(input [, PreferredType])
-	    // https://tc39.github.io/ecma262/#sec-toprimitive
-	    function ToPrimitive(input, PreferredType) {
-	        switch (Type(input)) {
-	            case 0 /* Undefined */: return input;
-	            case 1 /* Null */: return input;
-	            case 2 /* Boolean */: return input;
-	            case 3 /* String */: return input;
-	            case 4 /* Symbol */: return input;
-	            case 5 /* Number */: return input;
-	        }
-	        var hint = PreferredType === 3 /* String */ ? "string" : PreferredType === 5 /* Number */ ? "number" : "default";
-	        var exoticToPrim = GetMethod(input, toPrimitiveSymbol);
-	        if (exoticToPrim !== undefined) {
-	            var result = exoticToPrim.call(input, hint);
-	            if (IsObject(result))
-	                throw new TypeError();
-	            return result;
-	        }
-	        return OrdinaryToPrimitive(input, hint === "default" ? "number" : hint);
-	    }
-	    // 7.1.1.1 OrdinaryToPrimitive(O, hint)
-	    // https://tc39.github.io/ecma262/#sec-ordinarytoprimitive
-	    function OrdinaryToPrimitive(O, hint) {
-	        if (hint === "string") {
-	            var toString_1 = O.toString;
-	            if (IsCallable(toString_1)) {
-	                var result = toString_1.call(O);
-	                if (!IsObject(result))
-	                    return result;
+	    function waitForMap(obj, fn) {
+	        var waitFor = [];
+	        var res = {};
+	        forEach(obj, function (a, k) {
+	            if (k === PRIMARY_OUTLET) {
+	                waitFor.push(rxjs_operator_map.map.call(fn(k, a), function (_) {
+	                    res[k] = _;
+	                    return _;
+	                }));
 	            }
-	            var valueOf = O.valueOf;
-	            if (IsCallable(valueOf)) {
-	                var result = valueOf.call(O);
-	                if (!IsObject(result))
-	                    return result;
+	        });
+	        forEach(obj, function (a, k) {
+	            if (k !== PRIMARY_OUTLET) {
+	                waitFor.push(rxjs_operator_map.map.call(fn(k, a), function (_) {
+	                    res[k] = _;
+	                    return _;
+	                }));
 	            }
+	        });
+	        if (waitFor.length > 0) {
+	            var concatted$ = rxjs_operator_concatAll.concatAll.call(rxjs_observable_of.of.apply(void 0, waitFor));
+	            var last$ = l.last.call(concatted$);
+	            return rxjs_operator_map.map.call(last$, function () { return res; });
 	        }
 	        else {
-	            var valueOf = O.valueOf;
-	            if (IsCallable(valueOf)) {
-	                var result = valueOf.call(O);
-	                if (!IsObject(result))
-	                    return result;
-	            }
-	            var toString_2 = O.toString;
-	            if (IsCallable(toString_2)) {
-	                var result = toString_2.call(O);
-	                if (!IsObject(result))
-	                    return result;
-	            }
+	            return rxjs_observable_of.of(res);
 	        }
-	        throw new TypeError();
 	    }
-	    // 7.1.2 ToBoolean(argument)
-	    // https://tc39.github.io/ecma262/2016/#sec-toboolean
-	    function ToBoolean(argument) {
-	        return !!argument;
+	    function andObservables(observables) {
+	        var merged$ = rxjs_operator_mergeAll.mergeAll.call(observables);
+	        return rxjs_operator_every.every.call(merged$, function (result) { return result === true; });
 	    }
-	    // 7.1.12 ToString(argument)
-	    // https://tc39.github.io/ecma262/#sec-tostring
-	    function ToString(argument) {
-	        return "" + argument;
-	    }
-	    // 7.1.14 ToPropertyKey(argument)
-	    // https://tc39.github.io/ecma262/#sec-topropertykey
-	    function ToPropertyKey(argument) {
-	        var key = ToPrimitive(argument, 3 /* String */);
-	        if (IsSymbol(key))
-	            return key;
-	        return ToString(key);
-	    }
-	    // 7.2 Testing and Comparison Operations
-	    // https://tc39.github.io/ecma262/#sec-testing-and-comparison-operations
-	    // 7.2.2 IsArray(argument)
-	    // https://tc39.github.io/ecma262/#sec-isarray
-	    function IsArray(argument) {
-	        return Array.isArray
-	            ? Array.isArray(argument)
-	            : argument instanceof Object
-	                ? argument instanceof Array
-	                : Object.prototype.toString.call(argument) === "[object Array]";
-	    }
-	    // 7.2.3 IsCallable(argument)
-	    // https://tc39.github.io/ecma262/#sec-iscallable
-	    function IsCallable(argument) {
-	        // NOTE: This is an approximation as we cannot check for [[Call]] internal method.
-	        return typeof argument === "function";
-	    }
-	    // 7.2.4 IsConstructor(argument)
-	    // https://tc39.github.io/ecma262/#sec-isconstructor
-	    function IsConstructor(argument) {
-	        // NOTE: This is an approximation as we cannot check for [[Construct]] internal method.
-	        return typeof argument === "function";
-	    }
-	    // 7.3 Operations on Objects
-	    // https://tc39.github.io/ecma262/#sec-operations-on-objects
-	    // 7.3.9 GetMethod(V, P)
-	    // https://tc39.github.io/ecma262/#sec-getmethod
-	    function GetMethod(V, P) {
-	        var func = V[P];
-	        if (func === undefined || func === null)
-	            return undefined;
-	        if (!IsCallable(func))
-	            throw new TypeError();
-	        return func;
-	    }
-	    // 7.4 Operations on Iterator Objects
-	    // https://tc39.github.io/ecma262/#sec-operations-on-iterator-objects
-	    function GetIterator(obj) {
-	        var method = GetMethod(obj, iteratorSymbol);
-	        if (!IsCallable(method))
-	            throw new TypeError(); // from Call
-	        var iterator = method.call(obj);
-	        if (!IsObject(iterator))
-	            throw new TypeError();
-	        return iterator;
-	    }
-	    // 7.4.4 IteratorValue(iterResult)
-	    // https://tc39.github.io/ecma262/2016/#sec-iteratorvalue
-	    function IteratorValue(iterResult) {
-	        return iterResult.value;
-	    }
-	    // 7.4.5 IteratorStep(iterator)
-	    // https://tc39.github.io/ecma262/#sec-iteratorstep
-	    function IteratorStep(iterator) {
-	        var result = iterator.next();
-	        return result.done ? false : result;
-	    }
-	    // 7.4.6 IteratorClose(iterator, completion)
-	    // https://tc39.github.io/ecma262/#sec-iteratorclose
-	    function IteratorClose(iterator) {
-	        var f = iterator["return"];
-	        if (f)
-	            f.call(iterator);
-	    }
-	    // 9.1 Ordinary Object Internal Methods and Internal Slots
-	    // https://tc39.github.io/ecma262/#sec-ordinary-object-internal-methods-and-internal-slots
-	    // 9.1.1.1 OrdinaryGetPrototypeOf(O)
-	    // https://tc39.github.io/ecma262/#sec-ordinarygetprototypeof
-	    function OrdinaryGetPrototypeOf(O) {
-	        var proto = Object.getPrototypeOf(O);
-	        if (typeof O !== "function" || O === functionPrototype)
-	            return proto;
-	        // TypeScript doesn't set __proto__ in ES5, as it's non-standard.
-	        // Try to determine the superclass constructor. Compatible implementations
-	        // must either set __proto__ on a subclass constructor to the superclass constructor,
-	        // or ensure each class has a valid `constructor` property on its prototype that
-	        // points back to the constructor.
-	        // If this is not the same as Function.[[Prototype]], then this is definately inherited.
-	        // This is the case when in ES6 or when using __proto__ in a compatible browser.
-	        if (proto !== functionPrototype)
-	            return proto;
-	        // If the super prototype is Object.prototype, null, or undefined, then we cannot determine the heritage.
-	        var prototype = O.prototype;
-	        var prototypeProto = prototype && Object.getPrototypeOf(prototype);
-	        if (prototypeProto == null || prototypeProto === Object.prototype)
-	            return proto;
-	        // If the constructor was not a function, then we cannot determine the heritage.
-	        var constructor = prototypeProto.constructor;
-	        if (typeof constructor !== "function")
-	            return proto;
-	        // If we have some kind of self-reference, then we cannot determine the heritage.
-	        if (constructor === O)
-	            return proto;
-	        // we have a pretty good guess at the heritage.
-	        return constructor;
-	    }
-	    // naive Map shim
-	    function CreateMapPolyfill() {
-	        var cacheSentinel = {};
-	        var arraySentinel = [];
-	        var MapIterator = (function () {
-	            function MapIterator(keys, values, selector) {
-	                this._index = 0;
-	                this._keys = keys;
-	                this._values = values;
-	                this._selector = selector;
-	            }
-	            MapIterator.prototype["@@iterator"] = function () { return this; };
-	            MapIterator.prototype[iteratorSymbol] = function () { return this; };
-	            MapIterator.prototype.next = function () {
-	                var index = this._index;
-	                if (index >= 0 && index < this._keys.length) {
-	                    var result = this._selector(this._keys[index], this._values[index]);
-	                    if (index + 1 >= this._keys.length) {
-	                        this._index = -1;
-	                        this._keys = arraySentinel;
-	                        this._values = arraySentinel;
-	                    }
-	                    else {
-	                        this._index++;
-	                    }
-	                    return { value: result, done: false };
-	                }
-	                return { value: undefined, done: true };
-	            };
-	            MapIterator.prototype.throw = function (error) {
-	                if (this._index >= 0) {
-	                    this._index = -1;
-	                    this._keys = arraySentinel;
-	                    this._values = arraySentinel;
-	                }
-	                throw error;
-	            };
-	            MapIterator.prototype.return = function (value) {
-	                if (this._index >= 0) {
-	                    this._index = -1;
-	                    this._keys = arraySentinel;
-	                    this._values = arraySentinel;
-	                }
-	                return { value: value, done: true };
-	            };
-	            return MapIterator;
-	        }());
-	        return (function () {
-	            function Map() {
-	                this._keys = [];
-	                this._values = [];
-	                this._cacheKey = cacheSentinel;
-	                this._cacheIndex = -2;
-	            }
-	            Object.defineProperty(Map.prototype, "size", {
-	                get: function () { return this._keys.length; },
-	                enumerable: true,
-	                configurable: true
-	            });
-	            Map.prototype.has = function (key) { return this._find(key, /*insert*/ false) >= 0; };
-	            Map.prototype.get = function (key) {
-	                var index = this._find(key, /*insert*/ false);
-	                return index >= 0 ? this._values[index] : undefined;
-	            };
-	            Map.prototype.set = function (key, value) {
-	                var index = this._find(key, /*insert*/ true);
-	                this._values[index] = value;
-	                return this;
-	            };
-	            Map.prototype.delete = function (key) {
-	                var index = this._find(key, /*insert*/ false);
-	                if (index >= 0) {
-	                    var size = this._keys.length;
-	                    for (var i = index + 1; i < size; i++) {
-	                        this._keys[i - 1] = this._keys[i];
-	                        this._values[i - 1] = this._values[i];
-	                    }
-	                    this._keys.length--;
-	                    this._values.length--;
-	                    if (key === this._cacheKey) {
-	                        this._cacheKey = cacheSentinel;
-	                        this._cacheIndex = -2;
-	                    }
-	                    return true;
-	                }
-	                return false;
-	            };
-	            Map.prototype.clear = function () {
-	                this._keys.length = 0;
-	                this._values.length = 0;
-	                this._cacheKey = cacheSentinel;
-	                this._cacheIndex = -2;
-	            };
-	            Map.prototype.keys = function () { return new MapIterator(this._keys, this._values, getKey); };
-	            Map.prototype.values = function () { return new MapIterator(this._keys, this._values, getValue); };
-	            Map.prototype.entries = function () { return new MapIterator(this._keys, this._values, getEntry); };
-	            Map.prototype["@@iterator"] = function () { return this.entries(); };
-	            Map.prototype[iteratorSymbol] = function () { return this.entries(); };
-	            Map.prototype._find = function (key, insert) {
-	                if (this._cacheKey === key)
-	                    return this._cacheIndex;
-	                var index = this._keys.indexOf(key);
-	                if (index < 0 && insert) {
-	                    index = this._keys.length;
-	                    this._keys.push(key);
-	                    this._values.push(undefined);
-	                }
-	                return this._cacheKey = key, this._cacheIndex = index;
-	            };
-	            return Map;
-	        }());
-	        function getKey(key, _) {
-	            return key;
-	        }
-	        function getValue(_, value) {
+	    function wrapIntoObservable(value) {
+	        if (value instanceof rxjs_Observable.Observable) {
 	            return value;
 	        }
-	        function getEntry(key, value) {
-	            return [key, value];
+	        else if (value instanceof Promise) {
+	            return rxjs_observable_fromPromise.fromPromise(value);
+	        }
+	        else {
+	            return rxjs_observable_of.of(value);
 	        }
 	    }
-	    // naive Set shim
-	    function CreateSetPolyfill() {
-	        return (function () {
-	            function Set() {
-	                this._map = new _Map();
-	            }
-	            Object.defineProperty(Set.prototype, "size", {
-	                get: function () { return this._map.size; },
-	                enumerable: true,
-	                configurable: true
+	
+	    /**
+	     * @experimental
+	     */
+	    var ROUTES = new _angular_core.OpaqueToken('ROUTES');
+	    var LoadedRouterConfig = (function () {
+	        function LoadedRouterConfig(routes, injector, factoryResolver) {
+	            this.routes = routes;
+	            this.injector = injector;
+	            this.factoryResolver = factoryResolver;
+	        }
+	        return LoadedRouterConfig;
+	    }());
+	    var RouterConfigLoader = (function () {
+	        function RouterConfigLoader(loader, compiler) {
+	            this.loader = loader;
+	            this.compiler = compiler;
+	        }
+	        RouterConfigLoader.prototype.load = function (parentInjector, loadChildren) {
+	            return rxjs_operator_map.map.call(this.loadModuleFactory(loadChildren), function (r) {
+	                var ref = r.create(parentInjector);
+	                return new LoadedRouterConfig(flatten(ref.injector.get(ROUTES)), ref.injector, ref.componentFactoryResolver);
 	            });
-	            Set.prototype.has = function (value) { return this._map.has(value); };
-	            Set.prototype.add = function (value) { return this._map.set(value, value), this; };
-	            Set.prototype.delete = function (value) { return this._map.delete(value); };
-	            Set.prototype.clear = function () { this._map.clear(); };
-	            Set.prototype.keys = function () { return this._map.keys(); };
-	            Set.prototype.values = function () { return this._map.values(); };
-	            Set.prototype.entries = function () { return this._map.entries(); };
-	            Set.prototype["@@iterator"] = function () { return this.keys(); };
-	            Set.prototype[iteratorSymbol] = function () { return this.keys(); };
-	            return Set;
-	        }());
+	        };
+	        RouterConfigLoader.prototype.loadModuleFactory = function (loadChildren) {
+	            var _this = this;
+	            if (typeof loadChildren === 'string') {
+	                return rxjs_observable_fromPromise.fromPromise(this.loader.load(loadChildren));
+	            }
+	            else {
+	                var offlineMode_1 = this.compiler instanceof _angular_core.Compiler;
+	                return rxjs_operator_mergeMap.mergeMap.call(wrapIntoObservable(loadChildren()), function (t) { return offlineMode_1 ? rxjs_observable_of.of(t) : rxjs_observable_fromPromise.fromPromise(_this.compiler.compileModuleAsync(t)); });
+	            }
+	        };
+	        return RouterConfigLoader;
+	    }());
+	
+	    function createEmptyUrlTree() {
+	        return new UrlTree(new UrlSegmentGroup([], {}), {}, null);
 	    }
-	    // naive WeakMap shim
-	    function CreateWeakMapPolyfill() {
-	        var UUID_SIZE = 16;
-	        var keys = createDictionary();
-	        var rootKey = CreateUniqueKey();
-	        return (function () {
-	            function WeakMap() {
-	                this._key = CreateUniqueKey();
-	            }
-	            WeakMap.prototype.has = function (target) {
-	                var table = GetOrCreateWeakMapTable(target, /*create*/ false);
-	                return table !== undefined ? HashMap.has(table, this._key) : false;
-	            };
-	            WeakMap.prototype.get = function (target) {
-	                var table = GetOrCreateWeakMapTable(target, /*create*/ false);
-	                return table !== undefined ? HashMap.get(table, this._key) : undefined;
-	            };
-	            WeakMap.prototype.set = function (target, value) {
-	                var table = GetOrCreateWeakMapTable(target, /*create*/ true);
-	                table[this._key] = value;
-	                return this;
-	            };
-	            WeakMap.prototype.delete = function (target) {
-	                var table = GetOrCreateWeakMapTable(target, /*create*/ false);
-	                return table !== undefined ? delete table[this._key] : false;
-	            };
-	            WeakMap.prototype.clear = function () {
-	                // NOTE: not a real clear, just makes the previous data unreachable
-	                this._key = CreateUniqueKey();
-	            };
-	            return WeakMap;
-	        }());
-	        function CreateUniqueKey() {
-	            var key;
-	            do
-	                key = "@@WeakMap@@" + CreateUUID();
-	            while (HashMap.has(keys, key));
-	            keys[key] = true;
-	            return key;
+	    function containsTree(container, containee, exact) {
+	        if (exact) {
+	            return equalSegmentGroups(container.root, containee.root);
 	        }
-	        function GetOrCreateWeakMapTable(target, create) {
-	            if (!hasOwn.call(target, rootKey)) {
-	                if (!create)
-	                    return undefined;
-	                Object.defineProperty(target, rootKey, { value: createDictionary() });
-	            }
-	            return target[rootKey];
-	        }
-	        function FillRandomBytes(buffer, size) {
-	            for (var i = 0; i < size; ++i)
-	                buffer[i] = Math.random() * 0xff | 0;
-	            return buffer;
-	        }
-	        function GenRandomBytes(size) {
-	            if (typeof Uint8Array === "function") {
-	                if (typeof crypto !== "undefined")
-	                    return crypto.getRandomValues(new Uint8Array(size));
-	                if (typeof msCrypto !== "undefined")
-	                    return msCrypto.getRandomValues(new Uint8Array(size));
-	                return FillRandomBytes(new Uint8Array(size), size);
-	            }
-	            return FillRandomBytes(new Array(size), size);
-	        }
-	        function CreateUUID() {
-	            var data = GenRandomBytes(UUID_SIZE);
-	            // mark as random - RFC 4122 § 4.4
-	            data[6] = data[6] & 0x4f | 0x40;
-	            data[8] = data[8] & 0xbf | 0x80;
-	            var result = "";
-	            for (var offset = 0; offset < UUID_SIZE; ++offset) {
-	                var byte = data[offset];
-	                if (offset === 4 || offset === 6 || offset === 8)
-	                    result += "-";
-	                if (byte < 16)
-	                    result += "0";
-	                result += byte.toString(16).toLowerCase();
-	            }
-	            return result;
+	        else {
+	            return containsSegmentGroup(container.root, containee.root);
 	        }
 	    }
-	    // uses a heuristic used by v8 and chakra to force an object into dictionary mode.
-	    function MakeDictionary(obj) {
-	        obj.__ = undefined;
-	        delete obj.__;
-	        return obj;
+	    function equalSegmentGroups(container, containee) {
+	        if (!equalPath(container.segments, containee.segments))
+	            return false;
+	        if (container.numberOfChildren !== containee.numberOfChildren)
+	            return false;
+	        for (var c in containee.children) {
+	            if (!container.children[c])
+	                return false;
+	            if (!equalSegmentGroups(container.children[c], containee.children[c]))
+	                return false;
+	        }
+	        return true;
 	    }
-	    // patch global Reflect
-	    (function (__global) {
-	        if (typeof __global.Reflect !== "undefined") {
-	            if (__global.Reflect !== Reflect) {
-	                for (var p in Reflect) {
-	                    if (hasOwn.call(Reflect, p)) {
-	                        __global.Reflect[p] = Reflect[p];
+	    function containsSegmentGroup(container, containee) {
+	        return containsSegmentGroupHelper(container, containee, containee.segments);
+	    }
+	    function containsSegmentGroupHelper(container, containee, containeePaths) {
+	        if (container.segments.length > containeePaths.length) {
+	            var current = container.segments.slice(0, containeePaths.length);
+	            if (!equalPath(current, containeePaths))
+	                return false;
+	            if (containee.hasChildren())
+	                return false;
+	            return true;
+	        }
+	        else if (container.segments.length === containeePaths.length) {
+	            if (!equalPath(container.segments, containeePaths))
+	                return false;
+	            for (var c in containee.children) {
+	                if (!container.children[c])
+	                    return false;
+	                if (!containsSegmentGroup(container.children[c], containee.children[c]))
+	                    return false;
+	            }
+	            return true;
+	        }
+	        else {
+	            var current = containeePaths.slice(0, container.segments.length);
+	            var next = containeePaths.slice(container.segments.length);
+	            if (!equalPath(container.segments, current))
+	                return false;
+	            if (!container.children[PRIMARY_OUTLET])
+	                return false;
+	            return containsSegmentGroupHelper(container.children[PRIMARY_OUTLET], containee, next);
+	        }
+	    }
+	    /**
+	     * @whatItDoes Represents the parsed URL.
+	     *
+	     * @howToUse
+	     *
+	     * ```
+	     * @Component({templateUrl:'template.html'})
+	     * class MyComponent {
+	     *   constructor(router: Router) {
+	     *     const tree: UrlTree =
+	     * router.parseUrl('/team/33/(user/victor//support:help)?debug=true#fragment');
+	     *     const f = tree.fragment; // return 'fragment'
+	     *     const q = tree.queryParams; // returns {debug: 'true'}
+	     *     const g: UrlSegmentGroup = tree.root.children[PRIMARY_OUTLET];
+	     *     const s: UrlSegment[] = g.segments; // returns 2 segments 'team' and '33'
+	     *     g.children[PRIMARY_OUTLET].segments; // returns 2 segments 'user' and 'victor'
+	     *     g.children['support'].segments; // return 1 segment 'help'
+	     *   }
+	     * }
+	     * ```
+	     *
+	     * @description
+	     *
+	     * Since a router state is a tree, and the URL is nothing but a serialized state, the URL is a
+	     * serialized tree.
+	     * UrlTree is a data structure that provides a lot of affordances in dealing with URLs
+	     *
+	     * @stable
+	     */
+	    var UrlTree = (function () {
+	        /**
+	         * @internal
+	         */
+	        function UrlTree(
+	            /**
+	            * The root segment group of the URL tree.
+	             */
+	            root,
+	            /**
+	             * The query params of the URL.
+	             */
+	            queryParams,
+	            /**
+	             * The fragment of the URL.
+	             */
+	            fragment) {
+	            this.root = root;
+	            this.queryParams = queryParams;
+	            this.fragment = fragment;
+	        }
+	        /**
+	         * @docsNotRequired
+	         */
+	        UrlTree.prototype.toString = function () { return new DefaultUrlSerializer().serialize(this); };
+	        return UrlTree;
+	    }());
+	    /**
+	     * @whatItDoes Represents the parsed URL segment.
+	     *
+	     * See {@link UrlTree} for more information.
+	     *
+	     * @stable
+	     */
+	    var UrlSegmentGroup = (function () {
+	        function UrlSegmentGroup(
+	            /**
+	             * The URL segments of this group. See {@link UrlSegment} for more information.
+	             */
+	            segments,
+	            /**
+	             * The list of children of this group.
+	             */
+	            children) {
+	            var _this = this;
+	            this.segments = segments;
+	            this.children = children;
+	            /**
+	             * The parent node in the url tree.
+	             */
+	            this.parent = null;
+	            forEach(children, function (v, k) { return v.parent = _this; });
+	        }
+	        /**
+	         * Return true if the segment has child segments
+	         */
+	        UrlSegmentGroup.prototype.hasChildren = function () { return this.numberOfChildren > 0; };
+	        Object.defineProperty(UrlSegmentGroup.prototype, "numberOfChildren", {
+	            /**
+	             * Returns the number of child sements.
+	             */
+	            get: function () { return Object.keys(this.children).length; },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        /**
+	         * @docsNotRequired
+	         */
+	        UrlSegmentGroup.prototype.toString = function () { return serializePaths(this); };
+	        return UrlSegmentGroup;
+	    }());
+	    /**
+	     * @whatItDoes Represents a single URL segment.
+	     *
+	     * @howToUse
+	     *
+	     * ```
+	     * @Component({templateUrl:'template.html'})
+	     * class MyComponent {
+	     *   constructor(router: Router) {
+	     *     const tree: UrlTree = router.parseUrl('/team;id=33');
+	     *     const g: UrlSegmentGroup = tree.root.children[PRIMARY_OUTLET];
+	     *     const s: UrlSegment[] = g.segments;
+	     *     s[0].path; // returns 'team'
+	     *     s[0].parameters; // returns {id: 33}
+	     *   }
+	     * }
+	     * ```
+	     *
+	     * @description
+	     *
+	     * A UrlSegment is a part of a URL between the two slashes. It contains a path and
+	     * the matrix parameters associated with the segment.
+	     *
+	     * @stable
+	     */
+	    var UrlSegment = (function () {
+	        function UrlSegment(
+	            /**
+	             * The part part of a URL segment.
+	             */
+	            path,
+	            /**
+	             * The matrix parameters associated with a segment.
+	             */
+	            parameters) {
+	            this.path = path;
+	            this.parameters = parameters;
+	        }
+	        /**
+	         * @docsNotRequired
+	         */
+	        UrlSegment.prototype.toString = function () { return serializePath(this); };
+	        return UrlSegment;
+	    }());
+	    function equalPath(a, b) {
+	        if (a.length !== b.length)
+	            return false;
+	        for (var i = 0; i < a.length; ++i) {
+	            if (a[i].path !== b[i].path)
+	                return false;
+	        }
+	        return true;
+	    }
+	    function mapChildrenIntoArray(segment, fn) {
+	        var res = [];
+	        forEach(segment.children, function (child, childOutlet) {
+	            if (childOutlet === PRIMARY_OUTLET) {
+	                res = res.concat(fn(child, childOutlet));
+	            }
+	        });
+	        forEach(segment.children, function (child, childOutlet) {
+	            if (childOutlet !== PRIMARY_OUTLET) {
+	                res = res.concat(fn(child, childOutlet));
+	            }
+	        });
+	        return res;
+	    }
+	    /**
+	     * @whatItDoes Serializes and deserializes a URL string into a URL tree.
+	     *
+	     * @description The url serialization strategy is customizable. You can
+	     * make all URLs case insensitive by providing a custom UrlSerializer.
+	     *
+	     * See {@link DefaultUrlSerializer} for an example of a URL serializer.
+	     *
+	     * @stable
+	     */
+	    var UrlSerializer = (function () {
+	        function UrlSerializer() {
+	        }
+	        return UrlSerializer;
+	    }());
+	    /**
+	     * @whatItDoes A default implementation of the {@link UrlSerializer}.
+	     *
+	     * @description
+	     *
+	     * Example URLs:
+	     *
+	     * ```
+	     * /inbox/33(popup:compose)
+	     * /inbox/33;open=true/messages/44
+	     * ```
+	     *
+	     * DefaultUrlSerializer uses parentheses to serialize secondary segments (e.g., popup:compose), the
+	     * colon syntax to specify the outlet, and the ';parameter=value' syntax (e.g., open=true) to
+	     * specify route specific parameters.
+	     *
+	     * @stable
+	     */
+	    var DefaultUrlSerializer = (function () {
+	        function DefaultUrlSerializer() {
+	        }
+	        /**
+	         * Parse a url into a {@link UrlTree}.
+	         */
+	        DefaultUrlSerializer.prototype.parse = function (url) {
+	            var p = new UrlParser(url);
+	            return new UrlTree(p.parseRootSegment(), p.parseQueryParams(), p.parseFragment());
+	        };
+	        /**
+	         * Converts a {@link UrlTree} into a url.
+	         */
+	        DefaultUrlSerializer.prototype.serialize = function (tree) {
+	            var segment = "/" + serializeSegment(tree.root, true);
+	            var query = serializeQueryParams(tree.queryParams);
+	            var fragment = tree.fragment !== null && tree.fragment !== undefined ? "#" + encodeURI(tree.fragment) : '';
+	            return "" + segment + query + fragment;
+	        };
+	        return DefaultUrlSerializer;
+	    }());
+	    function serializePaths(segment) {
+	        return segment.segments.map(function (p) { return serializePath(p); }).join('/');
+	    }
+	    function serializeSegment(segment, root) {
+	        if (segment.hasChildren() && root) {
+	            var primary = segment.children[PRIMARY_OUTLET] ?
+	                serializeSegment(segment.children[PRIMARY_OUTLET], false) :
+	                '';
+	            var children_1 = [];
+	            forEach(segment.children, function (v, k) {
+	                if (k !== PRIMARY_OUTLET) {
+	                    children_1.push(k + ":" + serializeSegment(v, false));
+	                }
+	            });
+	            if (children_1.length > 0) {
+	                return primary + "(" + children_1.join('//') + ")";
+	            }
+	            else {
+	                return "" + primary;
+	            }
+	        }
+	        else if (segment.hasChildren() && !root) {
+	            var children = mapChildrenIntoArray(segment, function (v, k) {
+	                if (k === PRIMARY_OUTLET) {
+	                    return [serializeSegment(segment.children[PRIMARY_OUTLET], false)];
+	                }
+	                else {
+	                    return [(k + ":" + serializeSegment(v, false))];
+	                }
+	            });
+	            return serializePaths(segment) + "/(" + children.join('//') + ")";
+	        }
+	        else {
+	            return serializePaths(segment);
+	        }
+	    }
+	    function encode(s) {
+	        return encodeURIComponent(s);
+	    }
+	    function decode(s) {
+	        return decodeURIComponent(s);
+	    }
+	    function serializePath(path) {
+	        return "" + encode(path.path) + serializeParams(path.parameters);
+	    }
+	    function serializeParams(params) {
+	        return pairs(params).map(function (p) { return (";" + encode(p.first) + "=" + encode(p.second)); }).join('');
+	    }
+	    function serializeQueryParams(params) {
+	        var strs = pairs(params).map(function (p) { return (encode(p.first) + "=" + encode(p.second)); });
+	        return strs.length > 0 ? "?" + strs.join("&") : '';
+	    }
+	    var Pair = (function () {
+	        function Pair(first, second) {
+	            this.first = first;
+	            this.second = second;
+	        }
+	        return Pair;
+	    }());
+	    function pairs(obj) {
+	        var res = [];
+	        for (var prop in obj) {
+	            if (obj.hasOwnProperty(prop)) {
+	                res.push(new Pair(prop, obj[prop]));
+	            }
+	        }
+	        return res;
+	    }
+	    var SEGMENT_RE = /^[^\/\(\)\?;=&#]+/;
+	    function matchSegments(str) {
+	        SEGMENT_RE.lastIndex = 0;
+	        var match = str.match(SEGMENT_RE);
+	        return match ? match[0] : '';
+	    }
+	    var QUERY_PARAM_RE = /^[^=\?&#]+/;
+	    function matchQueryParams(str) {
+	        QUERY_PARAM_RE.lastIndex = 0;
+	        var match = str.match(SEGMENT_RE);
+	        return match ? match[0] : '';
+	    }
+	    var QUERY_PARAM_VALUE_RE = /^[^\?&#]+/;
+	    function matchUrlQueryParamValue(str) {
+	        QUERY_PARAM_VALUE_RE.lastIndex = 0;
+	        var match = str.match(QUERY_PARAM_VALUE_RE);
+	        return match ? match[0] : '';
+	    }
+	    var UrlParser = (function () {
+	        function UrlParser(url) {
+	            this.url = url;
+	            this.remaining = url;
+	        }
+	        UrlParser.prototype.peekStartsWith = function (str) { return this.remaining.startsWith(str); };
+	        UrlParser.prototype.capture = function (str) {
+	            if (!this.remaining.startsWith(str)) {
+	                throw new Error("Expected \"" + str + "\".");
+	            }
+	            this.remaining = this.remaining.substring(str.length);
+	        };
+	        UrlParser.prototype.parseRootSegment = function () {
+	            if (this.remaining.startsWith('/')) {
+	                this.capture('/');
+	            }
+	            if (this.remaining === '' || this.remaining.startsWith('?') || this.remaining.startsWith('#')) {
+	                return new UrlSegmentGroup([], {});
+	            }
+	            else {
+	                return new UrlSegmentGroup([], this.parseChildren());
+	            }
+	        };
+	        UrlParser.prototype.parseChildren = function () {
+	            if (this.remaining.length == 0) {
+	                return {};
+	            }
+	            if (this.peekStartsWith('/')) {
+	                this.capture('/');
+	            }
+	            var paths = [];
+	            if (!this.peekStartsWith('(')) {
+	                paths.push(this.parseSegments());
+	            }
+	            while (this.peekStartsWith('/') && !this.peekStartsWith('//') && !this.peekStartsWith('/(')) {
+	                this.capture('/');
+	                paths.push(this.parseSegments());
+	            }
+	            var children = {};
+	            if (this.peekStartsWith('/(')) {
+	                this.capture('/');
+	                children = this.parseParens(true);
+	            }
+	            var res = {};
+	            if (this.peekStartsWith('(')) {
+	                res = this.parseParens(false);
+	            }
+	            if (paths.length > 0 || Object.keys(children).length > 0) {
+	                res[PRIMARY_OUTLET] = new UrlSegmentGroup(paths, children);
+	            }
+	            return res;
+	        };
+	        UrlParser.prototype.parseSegments = function () {
+	            var path = matchSegments(this.remaining);
+	            if (path === '' && this.peekStartsWith(';')) {
+	                throw new Error("Empty path url segment cannot have parameters: '" + this.remaining + "'.");
+	            }
+	            this.capture(path);
+	            var matrixParams = {};
+	            if (this.peekStartsWith(';')) {
+	                matrixParams = this.parseMatrixParams();
+	            }
+	            return new UrlSegment(decode(path), matrixParams);
+	        };
+	        UrlParser.prototype.parseQueryParams = function () {
+	            var params = {};
+	            if (this.peekStartsWith('?')) {
+	                this.capture('?');
+	                this.parseQueryParam(params);
+	                while (this.remaining.length > 0 && this.peekStartsWith('&')) {
+	                    this.capture('&');
+	                    this.parseQueryParam(params);
+	                }
+	            }
+	            return params;
+	        };
+	        UrlParser.prototype.parseFragment = function () {
+	            if (this.peekStartsWith('#')) {
+	                return decodeURI(this.remaining.substring(1));
+	            }
+	            else {
+	                return null;
+	            }
+	        };
+	        UrlParser.prototype.parseMatrixParams = function () {
+	            var params = {};
+	            while (this.remaining.length > 0 && this.peekStartsWith(';')) {
+	                this.capture(';');
+	                this.parseParam(params);
+	            }
+	            return params;
+	        };
+	        UrlParser.prototype.parseParam = function (params) {
+	            var key = matchSegments(this.remaining);
+	            if (!key) {
+	                return;
+	            }
+	            this.capture(key);
+	            var value = '';
+	            if (this.peekStartsWith('=')) {
+	                this.capture('=');
+	                var valueMatch = matchSegments(this.remaining);
+	                if (valueMatch) {
+	                    value = valueMatch;
+	                    this.capture(value);
+	                }
+	            }
+	            params[decode(key)] = decode(value);
+	        };
+	        UrlParser.prototype.parseQueryParam = function (params) {
+	            var key = matchQueryParams(this.remaining);
+	            if (!key) {
+	                return;
+	            }
+	            this.capture(key);
+	            var value = '';
+	            if (this.peekStartsWith('=')) {
+	                this.capture('=');
+	                var valueMatch = matchUrlQueryParamValue(this.remaining);
+	                if (valueMatch) {
+	                    value = valueMatch;
+	                    this.capture(value);
+	                }
+	            }
+	            params[decode(key)] = decode(value);
+	        };
+	        UrlParser.prototype.parseParens = function (allowPrimary) {
+	            var segments = {};
+	            this.capture('(');
+	            while (!this.peekStartsWith(')') && this.remaining.length > 0) {
+	                var path = matchSegments(this.remaining);
+	                var next = this.remaining[path.length];
+	                // if is is not one of these characters, then the segment was unescaped
+	                // or the group was not closed
+	                if (next !== '/' && next !== ')' && next !== ';') {
+	                    throw new Error("Cannot parse url '" + this.url + "'");
+	                }
+	                var outletName = void 0;
+	                if (path.indexOf(':') > -1) {
+	                    outletName = path.substr(0, path.indexOf(':'));
+	                    this.capture(outletName);
+	                    this.capture(':');
+	                }
+	                else if (allowPrimary) {
+	                    outletName = PRIMARY_OUTLET;
+	                }
+	                var children = this.parseChildren();
+	                segments[outletName] = Object.keys(children).length === 1 ? children[PRIMARY_OUTLET] :
+	                    new UrlSegmentGroup([], children);
+	                if (this.peekStartsWith('//')) {
+	                    this.capture('//');
+	                }
+	            }
+	            this.capture(')');
+	            return segments;
+	        };
+	        return UrlParser;
+	    }());
+	
+	    var NoMatch = (function () {
+	        function NoMatch(segmentGroup) {
+	            if (segmentGroup === void 0) { segmentGroup = null; }
+	            this.segmentGroup = segmentGroup;
+	        }
+	        return NoMatch;
+	    }());
+	    var AbsoluteRedirect = (function () {
+	        function AbsoluteRedirect(segments) {
+	            this.segments = segments;
+	        }
+	        return AbsoluteRedirect;
+	    }());
+	    function noMatch(segmentGroup) {
+	        return new rxjs_Observable.Observable(function (obs) { return obs.error(new NoMatch(segmentGroup)); });
+	    }
+	    function absoluteRedirect(segments) {
+	        return new rxjs_Observable.Observable(function (obs) { return obs.error(new AbsoluteRedirect(segments)); });
+	    }
+	    function canLoadFails(route) {
+	        return new rxjs_Observable.Observable(function (obs) { return obs.error(new NavigationCancelingError("Cannot load children because the guard of the route \"path: '" + route.path + "'\" returned false")); });
+	    }
+	    function applyRedirects(injector, configLoader, urlTree, config) {
+	        return new ApplyRedirects(injector, configLoader, urlTree, config).apply();
+	    }
+	    var ApplyRedirects = (function () {
+	        function ApplyRedirects(injector, configLoader, urlTree, config) {
+	            this.injector = injector;
+	            this.configLoader = configLoader;
+	            this.urlTree = urlTree;
+	            this.config = config;
+	            this.allowRedirects = true;
+	        }
+	        ApplyRedirects.prototype.apply = function () {
+	            var _this = this;
+	            var expanded$ = this.expandSegmentGroup(this.injector, this.config, this.urlTree.root, PRIMARY_OUTLET);
+	            var urlTrees$ = rxjs_operator_map.map.call(expanded$, function (rootSegmentGroup) { return _this.createUrlTree(rootSegmentGroup); });
+	            return rxjs_operator_catch._catch.call(urlTrees$, function (e) {
+	                if (e instanceof AbsoluteRedirect) {
+	                    // after an absolute redirect we do not apply any more redirects!
+	                    _this.allowRedirects = false;
+	                    var group = new UrlSegmentGroup([], (_a = {}, _a[PRIMARY_OUTLET] = new UrlSegmentGroup(e.segments, {}), _a));
+	                    // we need to run matching, so we can fetch all lazy-loaded modules
+	                    return _this.match(group);
+	                }
+	                else if (e instanceof NoMatch) {
+	                    throw _this.noMatchError(e);
+	                }
+	                else {
+	                    throw e;
+	                }
+	                var _a;
+	            });
+	        };
+	        ApplyRedirects.prototype.match = function (segmentGroup) {
+	            var _this = this;
+	            var expanded$ = this.expandSegmentGroup(this.injector, this.config, segmentGroup, PRIMARY_OUTLET);
+	            var mapped$ = rxjs_operator_map.map.call(expanded$, function (rootSegmentGroup) { return _this.createUrlTree(rootSegmentGroup); });
+	            return rxjs_operator_catch._catch.call(mapped$, function (e) {
+	                if (e instanceof NoMatch) {
+	                    throw _this.noMatchError(e);
+	                }
+	                else {
+	                    throw e;
+	                }
+	            });
+	        };
+	        ApplyRedirects.prototype.noMatchError = function (e) {
+	            return new Error("Cannot match any routes: '" + e.segmentGroup + "'");
+	        };
+	        ApplyRedirects.prototype.createUrlTree = function (rootCandidate) {
+	            var root = rootCandidate.segments.length > 0 ?
+	                new UrlSegmentGroup([], (_a = {}, _a[PRIMARY_OUTLET] = rootCandidate, _a)) :
+	                rootCandidate;
+	            return new UrlTree(root, this.urlTree.queryParams, this.urlTree.fragment);
+	            var _a;
+	        };
+	        ApplyRedirects.prototype.expandSegmentGroup = function (injector, routes, segmentGroup, outlet) {
+	            if (segmentGroup.segments.length === 0 && segmentGroup.hasChildren()) {
+	                return rxjs_operator_map.map.call(this.expandChildren(injector, routes, segmentGroup), function (children) { return new UrlSegmentGroup([], children); });
+	            }
+	            else {
+	                return this.expandSegment(injector, segmentGroup, routes, segmentGroup.segments, outlet, true);
+	            }
+	        };
+	        ApplyRedirects.prototype.expandChildren = function (injector, routes, segmentGroup) {
+	            var _this = this;
+	            return waitForMap(segmentGroup.children, function (childOutlet, child) { return _this.expandSegmentGroup(injector, routes, child, childOutlet); });
+	        };
+	        ApplyRedirects.prototype.expandSegment = function (injector, segmentGroup, routes, segments, outlet, allowRedirects) {
+	            var _this = this;
+	            var routes$ = rxjs_observable_of.of.apply(void 0, routes);
+	            var processedRoutes$ = rxjs_operator_map.map.call(routes$, function (r) {
+	                var expanded$ = _this.expandSegmentAgainstRoute(injector, segmentGroup, routes, r, segments, outlet, allowRedirects);
+	                return rxjs_operator_catch._catch.call(expanded$, function (e) {
+	                    if (e instanceof NoMatch)
+	                        return rxjs_observable_of.of(null);
+	                    else
+	                        throw e;
+	                });
+	            });
+	            var concattedProcessedRoutes$ = rxjs_operator_concatAll.concatAll.call(processedRoutes$);
+	            var first$ = rxjs_operator_first.first.call(concattedProcessedRoutes$, function (s) { return !!s; });
+	            return rxjs_operator_catch._catch.call(first$, function (e, _) {
+	                if (e instanceof rxjs_util_EmptyError.EmptyError) {
+	                    throw new NoMatch(segmentGroup);
+	                }
+	                else {
+	                    throw e;
+	                }
+	            });
+	        };
+	        ApplyRedirects.prototype.expandSegmentAgainstRoute = function (injector, segmentGroup, routes, route, paths, outlet, allowRedirects) {
+	            if (getOutlet$1(route) !== outlet)
+	                return noMatch(segmentGroup);
+	            if (route.redirectTo !== undefined && !(allowRedirects && this.allowRedirects))
+	                return noMatch(segmentGroup);
+	            if (route.redirectTo === undefined) {
+	                return this.matchSegmentAgainstRoute(injector, segmentGroup, route, paths);
+	            }
+	            else {
+	                return this.expandSegmentAgainstRouteUsingRedirect(injector, segmentGroup, routes, route, paths, outlet);
+	            }
+	        };
+	        ApplyRedirects.prototype.expandSegmentAgainstRouteUsingRedirect = function (injector, segmentGroup, routes, route, segments, outlet) {
+	            if (route.path === '**') {
+	                return this.expandWildCardWithParamsAgainstRouteUsingRedirect(route);
+	            }
+	            else {
+	                return this.expandRegularSegmentAgainstRouteUsingRedirect(injector, segmentGroup, routes, route, segments, outlet);
+	            }
+	        };
+	        ApplyRedirects.prototype.expandWildCardWithParamsAgainstRouteUsingRedirect = function (route) {
+	            var newSegments = applyRedirectCommands([], route.redirectTo, {});
+	            if (route.redirectTo.startsWith('/')) {
+	                return absoluteRedirect(newSegments);
+	            }
+	            else {
+	                return rxjs_observable_of.of(new UrlSegmentGroup(newSegments, {}));
+	            }
+	        };
+	        ApplyRedirects.prototype.expandRegularSegmentAgainstRouteUsingRedirect = function (injector, segmentGroup, routes, route, segments, outlet) {
+	            var _a = match(segmentGroup, route, segments), matched = _a.matched, consumedSegments = _a.consumedSegments, lastChild = _a.lastChild, positionalParamSegments = _a.positionalParamSegments;
+	            if (!matched)
+	                return noMatch(segmentGroup);
+	            var newSegments = applyRedirectCommands(consumedSegments, route.redirectTo, positionalParamSegments);
+	            if (route.redirectTo.startsWith('/')) {
+	                return absoluteRedirect(newSegments);
+	            }
+	            else {
+	                return this.expandSegment(injector, segmentGroup, routes, newSegments.concat(segments.slice(lastChild)), outlet, false);
+	            }
+	        };
+	        ApplyRedirects.prototype.matchSegmentAgainstRoute = function (injector, rawSegmentGroup, route, segments) {
+	            var _this = this;
+	            if (route.path === '**') {
+	                return rxjs_observable_of.of(new UrlSegmentGroup(segments, {}));
+	            }
+	            else {
+	                var _a = match(rawSegmentGroup, route, segments), matched = _a.matched, consumedSegments_1 = _a.consumedSegments, lastChild = _a.lastChild;
+	                if (!matched)
+	                    return noMatch(rawSegmentGroup);
+	                var rawSlicedSegments_1 = segments.slice(lastChild);
+	                var childConfig$ = this.getChildConfig(injector, route);
+	                return rxjs_operator_mergeMap.mergeMap.call(childConfig$, function (routerConfig) {
+	                    var childInjector = routerConfig.injector;
+	                    var childConfig = routerConfig.routes;
+	                    var _a = split(rawSegmentGroup, consumedSegments_1, rawSlicedSegments_1, childConfig), segmentGroup = _a.segmentGroup, slicedSegments = _a.slicedSegments;
+	                    if (slicedSegments.length === 0 && segmentGroup.hasChildren()) {
+	                        var expanded$ = _this.expandChildren(childInjector, childConfig, segmentGroup);
+	                        return rxjs_operator_map.map.call(expanded$, function (children) { return new UrlSegmentGroup(consumedSegments_1, children); });
+	                    }
+	                    else if (childConfig.length === 0 && slicedSegments.length === 0) {
+	                        return rxjs_observable_of.of(new UrlSegmentGroup(consumedSegments_1, {}));
+	                    }
+	                    else {
+	                        var expanded$ = _this.expandSegment(childInjector, segmentGroup, childConfig, slicedSegments, PRIMARY_OUTLET, true);
+	                        return rxjs_operator_map.map.call(expanded$, function (cs) { return new UrlSegmentGroup(consumedSegments_1.concat(cs.segments), cs.children); });
+	                    }
+	                });
+	            }
+	        };
+	        ApplyRedirects.prototype.getChildConfig = function (injector, route) {
+	            var _this = this;
+	            if (route.children) {
+	                return rxjs_observable_of.of(new LoadedRouterConfig(route.children, injector, null));
+	            }
+	            else if (route.loadChildren) {
+	                return rxjs_operator_mergeMap.mergeMap.call(runGuards(injector, route), function (shouldLoad) {
+	                    if (shouldLoad) {
+	                        if (route._loadedConfig) {
+	                            return rxjs_observable_of.of(route._loadedConfig);
+	                        }
+	                        else {
+	                            return rxjs_operator_map.map.call(_this.configLoader.load(injector, route.loadChildren), function (r) {
+	                                route._loadedConfig = r;
+	                                return r;
+	                            });
+	                        }
+	                    }
+	                    else {
+	                        return canLoadFails(route);
+	                    }
+	                });
+	            }
+	            else {
+	                return rxjs_observable_of.of(new LoadedRouterConfig([], injector, null));
+	            }
+	        };
+	        return ApplyRedirects;
+	    }());
+	    function runGuards(injector, route) {
+	        var canLoad = route.canLoad;
+	        if (!canLoad || canLoad.length === 0)
+	            return rxjs_observable_of.of(true);
+	        var obs = rxjs_operator_map.map.call(rxjs_observable_from.from(canLoad), function (c) {
+	            var guard = injector.get(c);
+	            if (guard.canLoad) {
+	                return wrapIntoObservable(guard.canLoad(route));
+	            }
+	            else {
+	                return wrapIntoObservable(guard(route));
+	            }
+	        });
+	        return andObservables(obs);
+	    }
+	    function match(segmentGroup, route, segments) {
+	        var noMatch = { matched: false, consumedSegments: [], lastChild: 0, positionalParamSegments: {} };
+	        if (route.path === '') {
+	            if ((route.pathMatch === 'full') && (segmentGroup.hasChildren() || segments.length > 0)) {
+	                return { matched: false, consumedSegments: [], lastChild: 0, positionalParamSegments: {} };
+	            }
+	            else {
+	                return { matched: true, consumedSegments: [], lastChild: 0, positionalParamSegments: {} };
+	            }
+	        }
+	        var path = route.path;
+	        var parts = path.split('/');
+	        var positionalParamSegments = {};
+	        var consumedSegments = [];
+	        var currentIndex = 0;
+	        for (var i = 0; i < parts.length; ++i) {
+	            if (currentIndex >= segments.length)
+	                return noMatch;
+	            var current = segments[currentIndex];
+	            var p = parts[i];
+	            var isPosParam = p.startsWith(':');
+	            if (!isPosParam && p !== current.path)
+	                return noMatch;
+	            if (isPosParam) {
+	                positionalParamSegments[p.substring(1)] = current;
+	            }
+	            consumedSegments.push(current);
+	            currentIndex++;
+	        }
+	        if (route.pathMatch === 'full' &&
+	            (segmentGroup.hasChildren() || currentIndex < segments.length)) {
+	            return { matched: false, consumedSegments: [], lastChild: 0, positionalParamSegments: {} };
+	        }
+	        return { matched: true, consumedSegments: consumedSegments, lastChild: currentIndex, positionalParamSegments: positionalParamSegments };
+	    }
+	    function applyRedirectCommands(segments, redirectTo, posParams) {
+	        var r = redirectTo.startsWith('/') ? redirectTo.substring(1) : redirectTo;
+	        if (r === '') {
+	            return [];
+	        }
+	        else {
+	            return createSegments(redirectTo, r.split('/'), segments, posParams);
+	        }
+	    }
+	    function createSegments(redirectTo, parts, segments, posParams) {
+	        return parts.map(function (p) { return p.startsWith(':') ? findPosParam(p, posParams, redirectTo) :
+	            findOrCreateSegment(p, segments); });
+	    }
+	    function findPosParam(part, posParams, redirectTo) {
+	        var paramName = part.substring(1);
+	        var pos = posParams[paramName];
+	        if (!pos)
+	            throw new Error("Cannot redirect to '" + redirectTo + "'. Cannot find '" + part + "'.");
+	        return pos;
+	    }
+	    function findOrCreateSegment(part, segments) {
+	        var idx = 0;
+	        for (var _i = 0, segments_1 = segments; _i < segments_1.length; _i++) {
+	            var s = segments_1[_i];
+	            if (s.path === part) {
+	                segments.splice(idx);
+	                return s;
+	            }
+	            idx++;
+	        }
+	        return new UrlSegment(part, {});
+	    }
+	    function split(segmentGroup, consumedSegments, slicedSegments, config) {
+	        if (slicedSegments.length > 0 &&
+	            containsEmptyPathRedirectsWithNamedOutlets(segmentGroup, slicedSegments, config)) {
+	            var s = new UrlSegmentGroup(consumedSegments, createChildrenForEmptySegments(config, new UrlSegmentGroup(slicedSegments, segmentGroup.children)));
+	            return { segmentGroup: mergeTrivialChildren(s), slicedSegments: [] };
+	        }
+	        else if (slicedSegments.length === 0 &&
+	            containsEmptyPathRedirects(segmentGroup, slicedSegments, config)) {
+	            var s = new UrlSegmentGroup(segmentGroup.segments, addEmptySegmentsToChildrenIfNeeded(segmentGroup, slicedSegments, config, segmentGroup.children));
+	            return { segmentGroup: mergeTrivialChildren(s), slicedSegments: slicedSegments };
+	        }
+	        else {
+	            return { segmentGroup: segmentGroup, slicedSegments: slicedSegments };
+	        }
+	    }
+	    function mergeTrivialChildren(s) {
+	        if (s.numberOfChildren === 1 && s.children[PRIMARY_OUTLET]) {
+	            var c = s.children[PRIMARY_OUTLET];
+	            return new UrlSegmentGroup(s.segments.concat(c.segments), c.children);
+	        }
+	        else {
+	            return s;
+	        }
+	    }
+	    function addEmptySegmentsToChildrenIfNeeded(segmentGroup, slicedSegments, routes, children) {
+	        var res = {};
+	        for (var _i = 0, routes_1 = routes; _i < routes_1.length; _i++) {
+	            var r = routes_1[_i];
+	            if (emptyPathRedirect(segmentGroup, slicedSegments, r) && !children[getOutlet$1(r)]) {
+	                res[getOutlet$1(r)] = new UrlSegmentGroup([], {});
+	            }
+	        }
+	        return merge(children, res);
+	    }
+	    function createChildrenForEmptySegments(routes, primarySegmentGroup) {
+	        var res = {};
+	        res[PRIMARY_OUTLET] = primarySegmentGroup;
+	        for (var _i = 0, routes_2 = routes; _i < routes_2.length; _i++) {
+	            var r = routes_2[_i];
+	            if (r.path === '' && getOutlet$1(r) !== PRIMARY_OUTLET) {
+	                res[getOutlet$1(r)] = new UrlSegmentGroup([], {});
+	            }
+	        }
+	        return res;
+	    }
+	    function containsEmptyPathRedirectsWithNamedOutlets(segmentGroup, slicedSegments, routes) {
+	        return routes
+	            .filter(function (r) { return emptyPathRedirect(segmentGroup, slicedSegments, r) &&
+	            getOutlet$1(r) !== PRIMARY_OUTLET; })
+	            .length > 0;
+	    }
+	    function containsEmptyPathRedirects(segmentGroup, slicedSegments, routes) {
+	        return routes.filter(function (r) { return emptyPathRedirect(segmentGroup, slicedSegments, r); }).length > 0;
+	    }
+	    function emptyPathRedirect(segmentGroup, slicedSegments, r) {
+	        if ((segmentGroup.hasChildren() || slicedSegments.length > 0) && r.pathMatch === 'full')
+	            return false;
+	        return r.path === '' && r.redirectTo !== undefined;
+	    }
+	    function getOutlet$1(route) {
+	        return route.outlet ? route.outlet : PRIMARY_OUTLET;
+	    }
+	
+	    /**
+	     * @license
+	     * Copyright Google Inc. All Rights Reserved.
+	     *
+	     * Use of this source code is governed by an MIT-style license that can be
+	     * found in the LICENSE file at https://angular.io/license
+	     */
+	    function validateConfig(config) {
+	        config.forEach(validateNode);
+	    }
+	    function validateNode(route) {
+	        if (Array.isArray(route)) {
+	            throw new Error("Invalid route configuration: Array cannot be specified");
+	        }
+	        if (!!route.redirectTo && !!route.children) {
+	            throw new Error("Invalid configuration of route '" + route.path + "': redirectTo and children cannot be used together");
+	        }
+	        if (!!route.redirectTo && !!route.loadChildren) {
+	            throw new Error("Invalid configuration of route '" + route.path + "': redirectTo and loadChildren cannot be used together");
+	        }
+	        if (!!route.children && !!route.loadChildren) {
+	            throw new Error("Invalid configuration of route '" + route.path + "': children and loadChildren cannot be used together");
+	        }
+	        if (!!route.redirectTo && !!route.component) {
+	            throw new Error("Invalid configuration of route '" + route.path + "': redirectTo and component cannot be used together");
+	        }
+	        if (route.redirectTo === undefined && !route.component && !route.children &&
+	            !route.loadChildren) {
+	            throw new Error("Invalid configuration of route '" + route.path + "': one of the following must be provided (component or redirectTo or children or loadChildren)");
+	        }
+	        if (route.path === undefined) {
+	            throw new Error("Invalid route configuration: routes must have path specified");
+	        }
+	        if (route.path.startsWith('/')) {
+	            throw new Error("Invalid route configuration of route '" + route.path + "': path cannot start with a slash");
+	        }
+	        if (route.path === '' && route.redirectTo !== undefined && route.pathMatch === undefined) {
+	            var exp = "The default value of 'pathMatch' is 'prefix', but often the intent is to use 'full'.";
+	            throw new Error("Invalid route configuration of route '{path: \"" + route.path + "\", redirectTo: \"" + route.redirectTo + "\"}': please provide 'pathMatch'. " + exp);
+	        }
+	        if (route.pathMatch !== undefined && route.pathMatch !== 'full' && route.pathMatch !== 'prefix') {
+	            throw new Error("Invalid configuration of route '" + route.path + "': pathMatch can only be set to 'prefix' or 'full'");
+	        }
+	    }
+	
+	    /**
+	     * @license
+	     * Copyright Google Inc. All Rights Reserved.
+	     *
+	     * Use of this source code is governed by an MIT-style license that can be
+	     * found in the LICENSE file at https://angular.io/license
+	     */
+	    var Tree = (function () {
+	        function Tree(root) {
+	            this._root = root;
+	        }
+	        Object.defineProperty(Tree.prototype, "root", {
+	            get: function () { return this._root.value; },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        /**
+	         * @internal
+	         */
+	        Tree.prototype.parent = function (t) {
+	            var p = this.pathFromRoot(t);
+	            return p.length > 1 ? p[p.length - 2] : null;
+	        };
+	        /**
+	         * @internal
+	         */
+	        Tree.prototype.children = function (t) {
+	            var n = findNode(t, this._root);
+	            return n ? n.children.map(function (t) { return t.value; }) : [];
+	        };
+	        /**
+	         * @internal
+	         */
+	        Tree.prototype.firstChild = function (t) {
+	            var n = findNode(t, this._root);
+	            return n && n.children.length > 0 ? n.children[0].value : null;
+	        };
+	        /**
+	         * @internal
+	         */
+	        Tree.prototype.siblings = function (t) {
+	            var p = findPath(t, this._root, []);
+	            if (p.length < 2)
+	                return [];
+	            var c = p[p.length - 2].children.map(function (c) { return c.value; });
+	            return c.filter(function (cc) { return cc !== t; });
+	        };
+	        /**
+	         * @internal
+	         */
+	        Tree.prototype.pathFromRoot = function (t) { return findPath(t, this._root, []).map(function (s) { return s.value; }); };
+	        return Tree;
+	    }());
+	    function findNode(expected, c) {
+	        if (expected === c.value)
+	            return c;
+	        for (var _i = 0, _a = c.children; _i < _a.length; _i++) {
+	            var cc = _a[_i];
+	            var r = findNode(expected, cc);
+	            if (r)
+	                return r;
+	        }
+	        return null;
+	    }
+	    function findPath(expected, c, collected) {
+	        collected.push(c);
+	        if (expected === c.value)
+	            return collected;
+	        for (var _i = 0, _a = c.children; _i < _a.length; _i++) {
+	            var cc = _a[_i];
+	            var cloned = collected.slice(0);
+	            var r = findPath(expected, cc, cloned);
+	            if (r.length > 0)
+	                return r;
+	        }
+	        return [];
+	    }
+	    var TreeNode = (function () {
+	        function TreeNode(value, children) {
+	            this.value = value;
+	            this.children = children;
+	        }
+	        TreeNode.prototype.toString = function () { return "TreeNode(" + this.value + ")"; };
+	        return TreeNode;
+	    }());
+	
+	    /**
+	     * @license
+	     * Copyright Google Inc. All Rights Reserved.
+	     *
+	     * Use of this source code is governed by an MIT-style license that can be
+	     * found in the LICENSE file at https://angular.io/license
+	     */
+	    var __extends$1 = (this && this.__extends) || function (d, b) {
+	        for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	        function __() { this.constructor = d; }
+	        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	    };
+	    /**
+	     * @whatItDoes Represents the state of the router.
+	     *
+	     * @howToUse
+	     *
+	     * ```
+	     * @Component({templateUrl:'template.html'})
+	     * class MyComponent {
+	     *   constructor(router: Router) {
+	     *     const state: RouterState = router.routerState;
+	     *     const root: ActivatedRoute = state.root;
+	     *     const child = root.firstChild;
+	     *     const id: Observable<string> = child.params.map(p => p.id);
+	     *     //...
+	     *   }
+	     * }
+	     * ```
+	     *
+	     * @description
+	     * RouterState is a tree of activated routes. Every node in this tree knows about the "consumed" URL
+	     * segments,
+	     * the extracted parameters, and the resolved data.
+	     *
+	     * See {@link ActivatedRoute} for more information.
+	     *
+	     * @stable
+	     */
+	    var RouterState = (function (_super) {
+	        __extends$1(RouterState, _super);
+	        /**
+	         * @internal
+	         */
+	        function RouterState(root,
+	            /**
+	             * The current snapshot of the router state.
+	             */
+	            snapshot) {
+	            _super.call(this, root);
+	            this.snapshot = snapshot;
+	            setRouterStateSnapshot(this, root);
+	        }
+	        RouterState.prototype.toString = function () { return this.snapshot.toString(); };
+	        return RouterState;
+	    }(Tree));
+	    function createEmptyState(urlTree, rootComponent) {
+	        var snapshot = createEmptyStateSnapshot(urlTree, rootComponent);
+	        var emptyUrl = new rxjs_BehaviorSubject.BehaviorSubject([new UrlSegment('', {})]);
+	        var emptyParams = new rxjs_BehaviorSubject.BehaviorSubject({});
+	        var emptyData = new rxjs_BehaviorSubject.BehaviorSubject({});
+	        var emptyQueryParams = new rxjs_BehaviorSubject.BehaviorSubject({});
+	        var fragment = new rxjs_BehaviorSubject.BehaviorSubject('');
+	        var activated = new ActivatedRoute(emptyUrl, emptyParams, emptyQueryParams, fragment, emptyData, PRIMARY_OUTLET, rootComponent, snapshot.root);
+	        activated.snapshot = snapshot.root;
+	        return new RouterState(new TreeNode(activated, []), snapshot);
+	    }
+	    function createEmptyStateSnapshot(urlTree, rootComponent) {
+	        var emptyParams = {};
+	        var emptyData = {};
+	        var emptyQueryParams = {};
+	        var fragment = '';
+	        var activated = new ActivatedRouteSnapshot([], emptyParams, emptyQueryParams, fragment, emptyData, PRIMARY_OUTLET, rootComponent, null, urlTree.root, -1, InheritedResolve.empty);
+	        return new RouterStateSnapshot('', new TreeNode(activated, []));
+	    }
+	    /**
+	     * @whatItDoes Contains the information about a route associated with a component loaded in an
+	     * outlet.
+	     * ActivatedRoute can also be used to traverse the router state tree.
+	     *
+	     * @howToUse
+	     *
+	     * ```
+	     * @Component({templateUrl:'./my-component.html'})
+	     * class MyComponent {
+	     *   constructor(route: ActivatedRoute) {
+	     *     const id: Observable<string> = route.params.map(p => p.id);
+	     *     const url: Observable<string> = route.url.map(s => s.join(''));
+	     *     const user = route.data.map(d => d.user); //includes `data` and `resolve`
+	     *   }
+	     * }
+	     * ```
+	     *
+	     * @stable
+	     */
+	    var ActivatedRoute = (function () {
+	        /**
+	         * @internal
+	         */
+	        function ActivatedRoute(
+	            /**
+	             *  The URL segments matched by this route. The observable will emit a new value when
+	             *  the array of segments changes.
+	             */
+	            url,
+	            /**
+	             * The matrix parameters scoped to this route. The observable will emit a new value when
+	             * the set of the parameters changes.
+	             */
+	            params,
+	            /**
+	             * The query parameters shared by all the routes. The observable will emit a new value when
+	             * the set of the parameters changes.
+	             */
+	            queryParams,
+	            /**
+	             * The URL fragment shared by all the routes. The observable will emit a new value when
+	             * the URL fragment changes.
+	             */
+	            fragment,
+	            /**
+	             * The static and resolved data of this route. The observable will emit a new value when
+	             * any of the resolvers returns a new object.
+	             */
+	            data,
+	            /**
+	             * The outlet name of the route. It's a constant.
+	             */
+	            outlet,
+	            /**
+	             * The component of the route. It's a constant.
+	             */
+	            component, // TODO: vsavkin: remove |string
+	            futureSnapshot) {
+	            this.url = url;
+	            this.params = params;
+	            this.queryParams = queryParams;
+	            this.fragment = fragment;
+	            this.data = data;
+	            this.outlet = outlet;
+	            this.component = component;
+	            this._futureSnapshot = futureSnapshot;
+	        }
+	        Object.defineProperty(ActivatedRoute.prototype, "routeConfig", {
+	            /**
+	             * The configuration used to match this route.
+	             */
+	            get: function () { return this._futureSnapshot.routeConfig; },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(ActivatedRoute.prototype, "root", {
+	            /**
+	             * The root of the router state.
+	             */
+	            get: function () { return this._routerState.root; },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(ActivatedRoute.prototype, "parent", {
+	            /**
+	             * The parent of this route in the router state tree.
+	             */
+	            get: function () { return this._routerState.parent(this); },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(ActivatedRoute.prototype, "firstChild", {
+	            /**
+	             * The first child of this route in the router state tree.
+	             */
+	            get: function () { return this._routerState.firstChild(this); },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(ActivatedRoute.prototype, "children", {
+	            /**
+	             * The children of this route in the router state tree.
+	             */
+	            get: function () { return this._routerState.children(this); },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(ActivatedRoute.prototype, "pathFromRoot", {
+	            /**
+	             * The path from the root of the router state tree to this route.
+	             */
+	            get: function () { return this._routerState.pathFromRoot(this); },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        /**
+	         * @docsNotRequired
+	         */
+	        ActivatedRoute.prototype.toString = function () {
+	            return this.snapshot ? this.snapshot.toString() : "Future(" + this._futureSnapshot + ")";
+	        };
+	        return ActivatedRoute;
+	    }());
+	    /**
+	     * @internal
+	     */
+	    var InheritedResolve = (function () {
+	        function InheritedResolve(parent, current) {
+	            this.parent = parent;
+	            this.current = current;
+	            /**
+	             * @internal
+	             */
+	            this.resolvedData = {};
+	        }
+	        Object.defineProperty(InheritedResolve.prototype, "flattenedResolvedData", {
+	            /**
+	             * @internal
+	             */
+	            get: function () {
+	                return this.parent ? merge(this.parent.flattenedResolvedData, this.resolvedData) :
+	                    this.resolvedData;
+	            },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(InheritedResolve, "empty", {
+	            get: function () { return new InheritedResolve(null, {}); },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        return InheritedResolve;
+	    }());
+	    /**
+	     * @whatItDoes Contains the information about a route associated with a component loaded in an
+	     * outlet
+	     * at a particular moment in time. ActivatedRouteSnapshot can also be used to traverse the router
+	     * state tree.
+	     *
+	     * @howToUse
+	     *
+	     * ```
+	     * @Component({templateUrl:'./my-component.html'})
+	     * class MyComponent {
+	     *   constructor(route: ActivatedRoute) {
+	     *     const id: string = route.snapshot.params.id;
+	     *     const url: string = route.snapshot.url.join('');
+	     *     const user = route.snapshot.data.user;
+	     *   }
+	     * }
+	     * ```
+	     *
+	     * @stable
+	     */
+	    var ActivatedRouteSnapshot = (function () {
+	        /**
+	         * @internal
+	         */
+	        function ActivatedRouteSnapshot(
+	            /**
+	             *  The URL segments matched by this route.
+	             */
+	            url,
+	            /**
+	             * The matrix parameters scoped to this route.
+	             */
+	            params,
+	            /**
+	             * The query parameters shared by all the routes.
+	             */
+	            queryParams,
+	            /**
+	             * The URL fragment shared by all the routes.
+	             */
+	            fragment,
+	            /**
+	             * The static and resolved data of this route.
+	             */
+	            data,
+	            /**
+	             * The outlet name of the route.
+	             */
+	            outlet,
+	            /**
+	             * The component of the route.
+	             */
+	            component, routeConfig, urlSegment, lastPathIndex, resolve) {
+	            this.url = url;
+	            this.params = params;
+	            this.queryParams = queryParams;
+	            this.fragment = fragment;
+	            this.data = data;
+	            this.outlet = outlet;
+	            this.component = component;
+	            this._routeConfig = routeConfig;
+	            this._urlSegment = urlSegment;
+	            this._lastPathIndex = lastPathIndex;
+	            this._resolve = resolve;
+	        }
+	        Object.defineProperty(ActivatedRouteSnapshot.prototype, "routeConfig", {
+	            /**
+	             * The configuration used to match this route.
+	             */
+	            get: function () { return this._routeConfig; },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(ActivatedRouteSnapshot.prototype, "root", {
+	            /**
+	             * The root of the router state.
+	             */
+	            get: function () { return this._routerState.root; },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(ActivatedRouteSnapshot.prototype, "parent", {
+	            /**
+	             * The parent of this route in the router state tree.
+	             */
+	            get: function () { return this._routerState.parent(this); },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(ActivatedRouteSnapshot.prototype, "firstChild", {
+	            /**
+	             * The first child of this route in the router state tree.
+	             */
+	            get: function () { return this._routerState.firstChild(this); },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(ActivatedRouteSnapshot.prototype, "children", {
+	            /**
+	             * The children of this route in the router state tree.
+	             */
+	            get: function () { return this._routerState.children(this); },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(ActivatedRouteSnapshot.prototype, "pathFromRoot", {
+	            /**
+	             * The path from the root of the router state tree to this route.
+	             */
+	            get: function () { return this._routerState.pathFromRoot(this); },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        /**
+	         * @docsNotRequired
+	         */
+	        ActivatedRouteSnapshot.prototype.toString = function () {
+	            var url = this.url.map(function (s) { return s.toString(); }).join('/');
+	            var matched = this._routeConfig ? this._routeConfig.path : '';
+	            return "Route(url:'" + url + "', path:'" + matched + "')";
+	        };
+	        return ActivatedRouteSnapshot;
+	    }());
+	    /**
+	     * @whatItDoes Represents the state of the router at a moment in time.
+	     *
+	     * @howToUse
+	     *
+	     * ```
+	     * @Component({templateUrl:'template.html'})
+	     * class MyComponent {
+	     *   constructor(router: Router) {
+	     *     const state: RouterState = router.routerState;
+	     *     const snapshot: RouterStateSnapshot = state.snapshot;
+	     *     const root: ActivatedRouteSnapshot = snapshot.root;
+	     *     const child = root.firstChild;
+	     *     const id: Observable<string> = child.params.map(p => p.id);
+	     *     //...
+	     *   }
+	     * }
+	     * ```
+	     *
+	     * @description
+	     * RouterStateSnapshot is a tree of activated route snapshots. Every node in this tree knows about
+	     * the "consumed" URL segments, the extracted parameters, and the resolved data.
+	     *
+	     * @stable
+	     */
+	    var RouterStateSnapshot = (function (_super) {
+	        __extends$1(RouterStateSnapshot, _super);
+	        /**
+	         * @internal
+	         */
+	        function RouterStateSnapshot(
+	            /** The url from which this snapshot was created */
+	            url, root) {
+	            _super.call(this, root);
+	            this.url = url;
+	            setRouterStateSnapshot(this, root);
+	        }
+	        RouterStateSnapshot.prototype.toString = function () { return serializeNode(this._root); };
+	        return RouterStateSnapshot;
+	    }(Tree));
+	    function setRouterStateSnapshot(state, node) {
+	        node.value._routerState = state;
+	        node.children.forEach(function (c) { return setRouterStateSnapshot(state, c); });
+	    }
+	    function serializeNode(node) {
+	        var c = node.children.length > 0 ? " { " + node.children.map(serializeNode).join(", ") + " } " : '';
+	        return "" + node.value + c;
+	    }
+	    /**
+	     * The expectation is that the activate route is created with the right set of parameters.
+	     * So we push new values into the observables only when they are not the initial values.
+	     * And we detect that by checking if the snapshot field is set.
+	     */
+	    function advanceActivatedRoute(route) {
+	        if (route.snapshot) {
+	            if (!shallowEqual(route.snapshot.queryParams, route._futureSnapshot.queryParams)) {
+	                route.queryParams.next(route._futureSnapshot.queryParams);
+	            }
+	            if (route.snapshot.fragment !== route._futureSnapshot.fragment) {
+	                route.fragment.next(route._futureSnapshot.fragment);
+	            }
+	            if (!shallowEqual(route.snapshot.params, route._futureSnapshot.params)) {
+	                route.params.next(route._futureSnapshot.params);
+	                route.data.next(route._futureSnapshot.data);
+	            }
+	            if (!shallowEqualArrays(route.snapshot.url, route._futureSnapshot.url)) {
+	                route.url.next(route._futureSnapshot.url);
+	            }
+	            route.snapshot = route._futureSnapshot;
+	        }
+	        else {
+	            route.snapshot = route._futureSnapshot;
+	            // this is for resolved data
+	            route.data.next(route._futureSnapshot.data);
+	        }
+	    }
+	
+	    function createRouterState(curr, prevState) {
+	        var root = createNode(curr._root, prevState ? prevState._root : undefined);
+	        return new RouterState(root, curr);
+	    }
+	    function createNode(curr, prevState) {
+	        if (prevState && equalRouteSnapshots(prevState.value.snapshot, curr.value)) {
+	            var value = prevState.value;
+	            value._futureSnapshot = curr.value;
+	            var children = createOrReuseChildren(curr, prevState);
+	            return new TreeNode(value, children);
+	        }
+	        else {
+	            var value = createActivatedRoute(curr.value);
+	            var children = curr.children.map(function (c) { return createNode(c); });
+	            return new TreeNode(value, children);
+	        }
+	    }
+	    function createOrReuseChildren(curr, prevState) {
+	        return curr.children.map(function (child) {
+	            for (var _i = 0, _a = prevState.children; _i < _a.length; _i++) {
+	                var p = _a[_i];
+	                if (equalRouteSnapshots(p.value.snapshot, child.value)) {
+	                    return createNode(child, p);
+	                }
+	            }
+	            return createNode(child);
+	        });
+	    }
+	    function createActivatedRoute(c) {
+	        return new ActivatedRoute(new rxjs_BehaviorSubject.BehaviorSubject(c.url), new rxjs_BehaviorSubject.BehaviorSubject(c.params), new rxjs_BehaviorSubject.BehaviorSubject(c.queryParams), new rxjs_BehaviorSubject.BehaviorSubject(c.fragment), new rxjs_BehaviorSubject.BehaviorSubject(c.data), c.outlet, c.component, c);
+	    }
+	    function equalRouteSnapshots(a, b) {
+	        return a._routeConfig === b._routeConfig;
+	    }
+	
+	    function createUrlTree(route, urlTree, commands, queryParams, fragment) {
+	        if (commands.length === 0) {
+	            return tree(urlTree.root, urlTree.root, urlTree, queryParams, fragment);
+	        }
+	        var normalizedCommands = normalizeCommands(commands);
+	        validateCommands(normalizedCommands);
+	        if (navigateToRoot(normalizedCommands)) {
+	            return tree(urlTree.root, new UrlSegmentGroup([], {}), urlTree, queryParams, fragment);
+	        }
+	        var startingPosition = findStartingPosition(normalizedCommands, urlTree, route);
+	        var segmentGroup = startingPosition.processChildren ?
+	            updateSegmentGroupChildren(startingPosition.segmentGroup, startingPosition.index, normalizedCommands.commands) :
+	            updateSegmentGroup(startingPosition.segmentGroup, startingPosition.index, normalizedCommands.commands);
+	        return tree(startingPosition.segmentGroup, segmentGroup, urlTree, queryParams, fragment);
+	    }
+	    function validateCommands(n) {
+	        if (n.isAbsolute && n.commands.length > 0 && isMatrixParams(n.commands[0])) {
+	            throw new Error('Root segment cannot have matrix parameters');
+	        }
+	        var c = n.commands.filter(function (c) { return typeof c === 'object' && c.outlets !== undefined; });
+	        if (c.length > 0 && c[0] !== n.commands[n.commands.length - 1]) {
+	            throw new Error('{outlets:{}} has to be the last command');
+	        }
+	    }
+	    function isMatrixParams(command) {
+	        return typeof command === 'object' && command.outlets === undefined &&
+	            command.segmentPath === undefined;
+	    }
+	    function tree(oldSegmentGroup, newSegmentGroup, urlTree, queryParams, fragment) {
+	        if (urlTree.root === oldSegmentGroup) {
+	            return new UrlTree(newSegmentGroup, stringify(queryParams), fragment);
+	        }
+	        else {
+	            return new UrlTree(replaceSegment(urlTree.root, oldSegmentGroup, newSegmentGroup), stringify(queryParams), fragment);
+	        }
+	    }
+	    function replaceSegment(current, oldSegment, newSegment) {
+	        var children = {};
+	        forEach(current.children, function (c, outletName) {
+	            if (c === oldSegment) {
+	                children[outletName] = newSegment;
+	            }
+	            else {
+	                children[outletName] = replaceSegment(c, oldSegment, newSegment);
+	            }
+	        });
+	        return new UrlSegmentGroup(current.segments, children);
+	    }
+	    function navigateToRoot(normalizedChange) {
+	        return normalizedChange.isAbsolute && normalizedChange.commands.length === 1 &&
+	            normalizedChange.commands[0] == '/';
+	    }
+	    var NormalizedNavigationCommands = (function () {
+	        function NormalizedNavigationCommands(isAbsolute, numberOfDoubleDots, commands) {
+	            this.isAbsolute = isAbsolute;
+	            this.numberOfDoubleDots = numberOfDoubleDots;
+	            this.commands = commands;
+	        }
+	        return NormalizedNavigationCommands;
+	    }());
+	    function normalizeCommands(commands) {
+	        if ((typeof commands[0] === 'string') && commands.length === 1 && commands[0] == '/') {
+	            return new NormalizedNavigationCommands(true, 0, commands);
+	        }
+	        var numberOfDoubleDots = 0;
+	        var isAbsolute = false;
+	        var res = [];
+	        var _loop_1 = function(i) {
+	            var c = commands[i];
+	            if (typeof c === 'object' && c.outlets !== undefined) {
+	                var r_1 = {};
+	                forEach(c.outlets, function (commands, name) {
+	                    if (typeof commands === 'string') {
+	                        r_1[name] = commands.split('/');
+	                    }
+	                    else {
+	                        r_1[name] = commands;
+	                    }
+	                });
+	                res.push({ outlets: r_1 });
+	                return "continue";
+	            }
+	            if (typeof c === 'object' && c.segmentPath !== undefined) {
+	                res.push(c.segmentPath);
+	                return "continue";
+	            }
+	            if (!(typeof c === 'string')) {
+	                res.push(c);
+	                return "continue";
+	            }
+	            if (i === 0) {
+	                var parts = c.split('/');
+	                for (var j = 0; j < parts.length; ++j) {
+	                    var cc = parts[j];
+	                    if (j == 0 && cc == '.') {
+	                    }
+	                    else if (j == 0 && cc == '') {
+	                        isAbsolute = true;
+	                    }
+	                    else if (cc == '..') {
+	                        numberOfDoubleDots++;
+	                    }
+	                    else if (cc != '') {
+	                        res.push(cc);
 	                    }
 	                }
 	            }
+	            else {
+	                res.push(c);
+	            }
+	        };
+	        for (var i = 0; i < commands.length; ++i) {
+	            _loop_1(i);
+	        }
+	        return new NormalizedNavigationCommands(isAbsolute, numberOfDoubleDots, res);
+	    }
+	    var Position = (function () {
+	        function Position(segmentGroup, processChildren, index) {
+	            this.segmentGroup = segmentGroup;
+	            this.processChildren = processChildren;
+	            this.index = index;
+	        }
+	        return Position;
+	    }());
+	    function findStartingPosition(normalizedChange, urlTree, route) {
+	        if (normalizedChange.isAbsolute) {
+	            return new Position(urlTree.root, true, 0);
+	        }
+	        else if (route.snapshot._lastPathIndex === -1) {
+	            return new Position(route.snapshot._urlSegment, true, 0);
 	        }
 	        else {
-	            __global.Reflect = Reflect;
+	            var modifier = isMatrixParams(normalizedChange.commands[0]) ? 0 : 1;
+	            var index = route.snapshot._lastPathIndex + modifier;
+	            return createPositionApplyingDoubleDots(route.snapshot._urlSegment, index, normalizedChange.numberOfDoubleDots);
 	        }
-	    })(typeof global !== "undefined" ? global :
-	        typeof self !== "undefined" ? self :
-	            Function("return this;")());
-	})(Reflect || (Reflect = {}));
+	    }
+	    function createPositionApplyingDoubleDots(group, index, numberOfDoubleDots) {
+	        var g = group;
+	        var ci = index;
+	        var dd = numberOfDoubleDots;
+	        while (dd > ci) {
+	            dd -= ci;
+	            g = g.parent;
+	            if (!g) {
+	                throw new Error('Invalid number of \'../\'');
+	            }
+	            ci = g.segments.length;
+	        }
+	        return new Position(g, false, ci - dd);
+	    }
+	    function getPath(command) {
+	        return "" + command;
+	    }
+	    function getOutlets(commands) {
+	        if (!(typeof commands[0] === 'object'))
+	            return (_a = {}, _a[PRIMARY_OUTLET] = commands, _a);
+	        if (commands[0].outlets === undefined)
+	            return (_b = {}, _b[PRIMARY_OUTLET] = commands, _b);
+	        return commands[0].outlets;
+	        var _a, _b;
+	    }
+	    function updateSegmentGroup(segmentGroup, startIndex, commands) {
+	        if (!segmentGroup) {
+	            segmentGroup = new UrlSegmentGroup([], {});
+	        }
+	        if (segmentGroup.segments.length === 0 && segmentGroup.hasChildren()) {
+	            return updateSegmentGroupChildren(segmentGroup, startIndex, commands);
+	        }
+	        var m = prefixedWith(segmentGroup, startIndex, commands);
+	        var slicedCommands = commands.slice(m.lastIndex);
+	        if (m.match && slicedCommands.length === 0) {
+	            return new UrlSegmentGroup(segmentGroup.segments, {});
+	        }
+	        else if (m.match && !segmentGroup.hasChildren()) {
+	            return createNewSegmentGroup(segmentGroup, startIndex, commands);
+	        }
+	        else if (m.match) {
+	            return updateSegmentGroupChildren(segmentGroup, 0, slicedCommands);
+	        }
+	        else {
+	            return createNewSegmentGroup(segmentGroup, startIndex, commands);
+	        }
+	    }
+	    function updateSegmentGroupChildren(segmentGroup, startIndex, commands) {
+	        if (commands.length === 0) {
+	            return new UrlSegmentGroup(segmentGroup.segments, {});
+	        }
+	        else {
+	            var outlets_1 = getOutlets(commands);
+	            var children_1 = {};
+	            forEach(outlets_1, function (commands, outlet) {
+	                if (commands !== null) {
+	                    children_1[outlet] = updateSegmentGroup(segmentGroup.children[outlet], startIndex, commands);
+	                }
+	            });
+	            forEach(segmentGroup.children, function (child, childOutlet) {
+	                if (outlets_1[childOutlet] === undefined) {
+	                    children_1[childOutlet] = child;
+	                }
+	            });
+	            return new UrlSegmentGroup(segmentGroup.segments, children_1);
+	        }
+	    }
+	    function prefixedWith(segmentGroup, startIndex, commands) {
+	        var currentCommandIndex = 0;
+	        var currentPathIndex = startIndex;
+	        var noMatch = { match: false, lastIndex: 0 };
+	        while (currentPathIndex < segmentGroup.segments.length) {
+	            if (currentCommandIndex >= commands.length)
+	                return noMatch;
+	            var path = segmentGroup.segments[currentPathIndex];
+	            var curr = getPath(commands[currentCommandIndex]);
+	            var next = currentCommandIndex < commands.length - 1 ? commands[currentCommandIndex + 1] : null;
+	            if (curr && next && (typeof next === 'object') && next.outlets === undefined) {
+	                if (!compare(curr, next, path))
+	                    return noMatch;
+	                currentCommandIndex += 2;
+	            }
+	            else {
+	                if (!compare(curr, {}, path))
+	                    return noMatch;
+	                currentCommandIndex++;
+	            }
+	            currentPathIndex++;
+	        }
+	        return { match: true, lastIndex: currentCommandIndex };
+	    }
+	    function createNewSegmentGroup(segmentGroup, startIndex, commands) {
+	        var paths = segmentGroup.segments.slice(0, startIndex);
+	        var i = 0;
+	        while (i < commands.length) {
+	            if (typeof commands[i] === 'object' && commands[i].outlets !== undefined) {
+	                var children = createNewSegmentChldren(commands[i].outlets);
+	                return new UrlSegmentGroup(paths, children);
+	            }
+	            // if we start with an object literal, we need to reuse the path part from the segment
+	            if (i === 0 && isMatrixParams(commands[0])) {
+	                var p = segmentGroup.segments[startIndex];
+	                paths.push(new UrlSegment(p.path, commands[0]));
+	                i++;
+	                continue;
+	            }
+	            var curr = getPath(commands[i]);
+	            var next = (i < commands.length - 1) ? commands[i + 1] : null;
+	            if (curr && next && isMatrixParams(next)) {
+	                paths.push(new UrlSegment(curr, stringify(next)));
+	                i += 2;
+	            }
+	            else {
+	                paths.push(new UrlSegment(curr, {}));
+	                i++;
+	            }
+	        }
+	        return new UrlSegmentGroup(paths, {});
+	    }
+	    function createNewSegmentChldren(outlets) {
+	        var children = {};
+	        forEach(outlets, function (commands, outlet) {
+	            if (commands !== null) {
+	                children[outlet] = createNewSegmentGroup(new UrlSegmentGroup([], {}), 0, commands);
+	            }
+	        });
+	        return children;
+	    }
+	    function stringify(params) {
+	        var res = {};
+	        forEach(params, function (v, k) { return res[k] = "" + v; });
+	        return res;
+	    }
+	    function compare(path, params, segment) {
+	        return path == segment.path && shallowEqual(params, segment.parameters);
+	    }
 	
-	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }())))
+	    var NoMatch$1 = (function () {
+	        function NoMatch() {
+	        }
+	        return NoMatch;
+	    }());
+	    var InheritedFromParent = (function () {
+	        function InheritedFromParent(parent, snapshot, params, data, resolve) {
+	            this.parent = parent;
+	            this.snapshot = snapshot;
+	            this.params = params;
+	            this.data = data;
+	            this.resolve = resolve;
+	        }
+	        Object.defineProperty(InheritedFromParent.prototype, "allParams", {
+	            get: function () {
+	                return this.parent ? merge(this.parent.allParams, this.params) : this.params;
+	            },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(InheritedFromParent.prototype, "allData", {
+	            get: function () { return this.parent ? merge(this.parent.allData, this.data) : this.data; },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        InheritedFromParent.empty = function (snapshot) {
+	            return new InheritedFromParent(null, snapshot, {}, {}, new InheritedResolve(null, {}));
+	        };
+	        return InheritedFromParent;
+	    }());
+	    function recognize(rootComponentType, config, urlTree, url) {
+	        return new Recognizer(rootComponentType, config, urlTree, url).recognize();
+	    }
+	    var Recognizer = (function () {
+	        function Recognizer(rootComponentType, config, urlTree, url) {
+	            this.rootComponentType = rootComponentType;
+	            this.config = config;
+	            this.urlTree = urlTree;
+	            this.url = url;
+	        }
+	        Recognizer.prototype.recognize = function () {
+	            try {
+	                var rootSegmentGroup = split$1(this.urlTree.root, [], [], this.config).segmentGroup;
+	                var children = this.processSegmentGroup(this.config, rootSegmentGroup, InheritedFromParent.empty(null), PRIMARY_OUTLET);
+	                var root = new ActivatedRouteSnapshot([], Object.freeze({}), Object.freeze(this.urlTree.queryParams), this.urlTree.fragment, {}, PRIMARY_OUTLET, this.rootComponentType, null, this.urlTree.root, -1, InheritedResolve.empty);
+	                var rootNode = new TreeNode(root, children);
+	                return rxjs_observable_of.of(new RouterStateSnapshot(this.url, rootNode));
+	            }
+	            catch (e) {
+	                return new rxjs_Observable.Observable(function (obs) { return obs.error(e); });
+	            }
+	        };
+	        Recognizer.prototype.processSegmentGroup = function (config, segmentGroup, inherited, outlet) {
+	            if (segmentGroup.segments.length === 0 && segmentGroup.hasChildren()) {
+	                return this.processChildren(config, segmentGroup, inherited);
+	            }
+	            else {
+	                return this.processSegment(config, segmentGroup, 0, segmentGroup.segments, inherited, outlet);
+	            }
+	        };
+	        Recognizer.prototype.processChildren = function (config, segmentGroup, inherited) {
+	            var _this = this;
+	            var children = mapChildrenIntoArray(segmentGroup, function (child, childOutlet) { return _this.processSegmentGroup(config, child, inherited, childOutlet); });
+	            checkOutletNameUniqueness(children);
+	            sortActivatedRouteSnapshots(children);
+	            return children;
+	        };
+	        Recognizer.prototype.processSegment = function (config, segmentGroup, pathIndex, segments, inherited, outlet) {
+	            for (var _i = 0, config_1 = config; _i < config_1.length; _i++) {
+	                var r = config_1[_i];
+	                try {
+	                    return this.processSegmentAgainstRoute(r, segmentGroup, pathIndex, segments, inherited, outlet);
+	                }
+	                catch (e) {
+	                    if (!(e instanceof NoMatch$1))
+	                        throw e;
+	                }
+	            }
+	            throw new NoMatch$1();
+	        };
+	        Recognizer.prototype.processSegmentAgainstRoute = function (route, rawSegment, pathIndex, segments, inherited, outlet) {
+	            if (route.redirectTo)
+	                throw new NoMatch$1();
+	            if ((route.outlet ? route.outlet : PRIMARY_OUTLET) !== outlet)
+	                throw new NoMatch$1();
+	            var newInheritedResolve = new InheritedResolve(inherited.resolve, getResolve(route));
+	            if (route.path === '**') {
+	                var params = segments.length > 0 ? last(segments).parameters : {};
+	                var snapshot_1 = new ActivatedRouteSnapshot(segments, Object.freeze(merge(inherited.allParams, params)), Object.freeze(this.urlTree.queryParams), this.urlTree.fragment, merge(inherited.allData, getData(route)), outlet, route.component, route, getSourceSegmentGroup(rawSegment), getPathIndexShift(rawSegment) + segments.length, newInheritedResolve);
+	                return [new TreeNode(snapshot_1, [])];
+	            }
+	            var _a = match$1(rawSegment, route, segments, inherited.snapshot), consumedSegments = _a.consumedSegments, parameters = _a.parameters, lastChild = _a.lastChild;
+	            var rawSlicedSegments = segments.slice(lastChild);
+	            var childConfig = getChildConfig(route);
+	            var _b = split$1(rawSegment, consumedSegments, rawSlicedSegments, childConfig), segmentGroup = _b.segmentGroup, slicedSegments = _b.slicedSegments;
+	            var snapshot = new ActivatedRouteSnapshot(consumedSegments, Object.freeze(merge(inherited.allParams, parameters)), Object.freeze(this.urlTree.queryParams), this.urlTree.fragment, merge(inherited.allData, getData(route)), outlet, route.component, route, getSourceSegmentGroup(rawSegment), getPathIndexShift(rawSegment) + consumedSegments.length, newInheritedResolve);
+	            var newInherited = route.component ?
+	                InheritedFromParent.empty(snapshot) :
+	                new InheritedFromParent(inherited, snapshot, parameters, getData(route), newInheritedResolve);
+	            if (slicedSegments.length === 0 && segmentGroup.hasChildren()) {
+	                var children = this.processChildren(childConfig, segmentGroup, newInherited);
+	                return [new TreeNode(snapshot, children)];
+	            }
+	            else if (childConfig.length === 0 && slicedSegments.length === 0) {
+	                return [new TreeNode(snapshot, [])];
+	            }
+	            else {
+	                var children = this.processSegment(childConfig, segmentGroup, pathIndex + lastChild, slicedSegments, newInherited, PRIMARY_OUTLET);
+	                return [new TreeNode(snapshot, children)];
+	            }
+	        };
+	        return Recognizer;
+	    }());
+	    function sortActivatedRouteSnapshots(nodes) {
+	        nodes.sort(function (a, b) {
+	            if (a.value.outlet === PRIMARY_OUTLET)
+	                return -1;
+	            if (b.value.outlet === PRIMARY_OUTLET)
+	                return 1;
+	            return a.value.outlet.localeCompare(b.value.outlet);
+	        });
+	    }
+	    function getChildConfig(route) {
+	        if (route.children) {
+	            return route.children;
+	        }
+	        else if (route.loadChildren) {
+	            return route._loadedConfig.routes;
+	        }
+	        else {
+	            return [];
+	        }
+	    }
+	    function match$1(segmentGroup, route, segments, parent) {
+	        if (route.path === '') {
+	            if (route.pathMatch === 'full' && (segmentGroup.hasChildren() || segments.length > 0)) {
+	                throw new NoMatch$1();
+	            }
+	            else {
+	                var params = parent ? parent.params : {};
+	                return { consumedSegments: [], lastChild: 0, parameters: params };
+	            }
+	        }
+	        var path = route.path;
+	        var parts = path.split('/');
+	        var posParameters = {};
+	        var consumedSegments = [];
+	        var currentIndex = 0;
+	        for (var i = 0; i < parts.length; ++i) {
+	            if (currentIndex >= segments.length)
+	                throw new NoMatch$1();
+	            var current = segments[currentIndex];
+	            var p = parts[i];
+	            var isPosParam = p.startsWith(':');
+	            if (!isPosParam && p !== current.path)
+	                throw new NoMatch$1();
+	            if (isPosParam) {
+	                posParameters[p.substring(1)] = current.path;
+	            }
+	            consumedSegments.push(current);
+	            currentIndex++;
+	        }
+	        if (route.pathMatch === 'full' &&
+	            (segmentGroup.hasChildren() || currentIndex < segments.length)) {
+	            throw new NoMatch$1();
+	        }
+	        var parameters = merge(posParameters, consumedSegments[consumedSegments.length - 1].parameters);
+	        return { consumedSegments: consumedSegments, lastChild: currentIndex, parameters: parameters };
+	    }
+	    function checkOutletNameUniqueness(nodes) {
+	        var names = {};
+	        nodes.forEach(function (n) {
+	            var routeWithSameOutletName = names[n.value.outlet];
+	            if (routeWithSameOutletName) {
+	                var p = routeWithSameOutletName.url.map(function (s) { return s.toString(); }).join('/');
+	                var c = n.value.url.map(function (s) { return s.toString(); }).join('/');
+	                throw new Error("Two segments cannot have the same outlet name: '" + p + "' and '" + c + "'.");
+	            }
+	            names[n.value.outlet] = n.value;
+	        });
+	    }
+	    function getSourceSegmentGroup(segmentGroup) {
+	        var s = segmentGroup;
+	        while (s._sourceSegment) {
+	            s = s._sourceSegment;
+	        }
+	        return s;
+	    }
+	    function getPathIndexShift(segmentGroup) {
+	        var s = segmentGroup;
+	        var res = (s._segmentIndexShift ? s._segmentIndexShift : 0);
+	        while (s._sourceSegment) {
+	            s = s._sourceSegment;
+	            res += (s._segmentIndexShift ? s._segmentIndexShift : 0);
+	        }
+	        return res - 1;
+	    }
+	    function split$1(segmentGroup, consumedSegments, slicedSegments, config) {
+	        if (slicedSegments.length > 0 &&
+	            containsEmptyPathMatchesWithNamedOutlets(segmentGroup, slicedSegments, config)) {
+	            var s = new UrlSegmentGroup(consumedSegments, createChildrenForEmptyPaths(segmentGroup, consumedSegments, config, new UrlSegmentGroup(slicedSegments, segmentGroup.children)));
+	            s._sourceSegment = segmentGroup;
+	            s._segmentIndexShift = consumedSegments.length;
+	            return { segmentGroup: s, slicedSegments: [] };
+	        }
+	        else if (slicedSegments.length === 0 &&
+	            containsEmptyPathMatches(segmentGroup, slicedSegments, config)) {
+	            var s = new UrlSegmentGroup(segmentGroup.segments, addEmptyPathsToChildrenIfNeeded(segmentGroup, slicedSegments, config, segmentGroup.children));
+	            s._sourceSegment = segmentGroup;
+	            s._segmentIndexShift = consumedSegments.length;
+	            return { segmentGroup: s, slicedSegments: slicedSegments };
+	        }
+	        else {
+	            var s = new UrlSegmentGroup(segmentGroup.segments, segmentGroup.children);
+	            s._sourceSegment = segmentGroup;
+	            s._segmentIndexShift = consumedSegments.length;
+	            return { segmentGroup: s, slicedSegments: slicedSegments };
+	        }
+	    }
+	    function addEmptyPathsToChildrenIfNeeded(segmentGroup, slicedSegments, routes, children) {
+	        var res = {};
+	        for (var _i = 0, routes_1 = routes; _i < routes_1.length; _i++) {
+	            var r = routes_1[_i];
+	            if (emptyPathMatch(segmentGroup, slicedSegments, r) && !children[getOutlet$2(r)]) {
+	                var s = new UrlSegmentGroup([], {});
+	                s._sourceSegment = segmentGroup;
+	                s._segmentIndexShift = segmentGroup.segments.length;
+	                res[getOutlet$2(r)] = s;
+	            }
+	        }
+	        return merge(children, res);
+	    }
+	    function createChildrenForEmptyPaths(segmentGroup, consumedSegments, routes, primarySegment) {
+	        var res = {};
+	        res[PRIMARY_OUTLET] = primarySegment;
+	        primarySegment._sourceSegment = segmentGroup;
+	        primarySegment._segmentIndexShift = consumedSegments.length;
+	        for (var _i = 0, routes_2 = routes; _i < routes_2.length; _i++) {
+	            var r = routes_2[_i];
+	            if (r.path === '' && getOutlet$2(r) !== PRIMARY_OUTLET) {
+	                var s = new UrlSegmentGroup([], {});
+	                s._sourceSegment = segmentGroup;
+	                s._segmentIndexShift = consumedSegments.length;
+	                res[getOutlet$2(r)] = s;
+	            }
+	        }
+	        return res;
+	    }
+	    function containsEmptyPathMatchesWithNamedOutlets(segmentGroup, slicedSegments, routes) {
+	        return routes
+	            .filter(function (r) { return emptyPathMatch(segmentGroup, slicedSegments, r) &&
+	            getOutlet$2(r) !== PRIMARY_OUTLET; })
+	            .length > 0;
+	    }
+	    function containsEmptyPathMatches(segmentGroup, slicedSegments, routes) {
+	        return routes.filter(function (r) { return emptyPathMatch(segmentGroup, slicedSegments, r); }).length > 0;
+	    }
+	    function emptyPathMatch(segmentGroup, slicedSegments, r) {
+	        if ((segmentGroup.hasChildren() || slicedSegments.length > 0) && r.pathMatch === 'full')
+	            return false;
+	        return r.path === '' && r.redirectTo === undefined;
+	    }
+	    function getOutlet$2(route) {
+	        return route.outlet ? route.outlet : PRIMARY_OUTLET;
+	    }
+	    function getData(route) {
+	        return route.data ? route.data : {};
+	    }
+	    function getResolve(route) {
+	        return route.resolve ? route.resolve : {};
+	    }
+	
+	    /**
+	     * @license
+	     * Copyright Google Inc. All Rights Reserved.
+	     *
+	     * Use of this source code is governed by an MIT-style license that can be
+	     * found in the LICENSE file at https://angular.io/license
+	     */
+	    /**
+	     * @whatItDoes Contains all the router outlets created in a component.
+	     *
+	     * @stable
+	     */
+	    var RouterOutletMap = (function () {
+	        function RouterOutletMap() {
+	            /** @internal */
+	            this._outlets = {};
+	        }
+	        /**
+	         * Adds an outlet to this map.
+	         */
+	        RouterOutletMap.prototype.registerOutlet = function (name, outlet) { this._outlets[name] = outlet; };
+	        /**
+	         * Removes an outlet from this map.
+	         */
+	        RouterOutletMap.prototype.removeOutlet = function (name) { this._outlets[name] = undefined; };
+	        return RouterOutletMap;
+	    }());
+	
+	    /**
+	     * @whatItDoes Represents an event triggered when a navigation starts.
+	     *
+	     * @stable
+	     */
+	    var NavigationStart = (function () {
+	        // TODO: vsavkin: make internal
+	        function NavigationStart(
+	            /** @docsNotRequired */
+	            id,
+	            /** @docsNotRequired */
+	            url) {
+	            this.id = id;
+	            this.url = url;
+	        }
+	        /** @docsNotRequired */
+	        NavigationStart.prototype.toString = function () { return "NavigationStart(id: " + this.id + ", url: '" + this.url + "')"; };
+	        return NavigationStart;
+	    }());
+	    /**
+	     * @whatItDoes Represents an event triggered when a navigation ends successfully.
+	     *
+	     * @stable
+	     */
+	    var NavigationEnd = (function () {
+	        // TODO: vsavkin: make internal
+	        function NavigationEnd(
+	            /** @docsNotRequired */
+	            id,
+	            /** @docsNotRequired */
+	            url,
+	            /** @docsNotRequired */
+	            urlAfterRedirects) {
+	            this.id = id;
+	            this.url = url;
+	            this.urlAfterRedirects = urlAfterRedirects;
+	        }
+	        /** @docsNotRequired */
+	        NavigationEnd.prototype.toString = function () {
+	            return "NavigationEnd(id: " + this.id + ", url: '" + this.url + "', urlAfterRedirects: '" + this.urlAfterRedirects + "')";
+	        };
+	        return NavigationEnd;
+	    }());
+	    /**
+	     * @whatItDoes Represents an event triggered when a navigation is canceled.
+	     *
+	     * @stable
+	     */
+	    var NavigationCancel = (function () {
+	        // TODO: vsavkin: make internal
+	        function NavigationCancel(
+	            /** @docsNotRequired */
+	            id,
+	            /** @docsNotRequired */
+	            url,
+	            /** @docsNotRequired */
+	            reason) {
+	            this.id = id;
+	            this.url = url;
+	            this.reason = reason;
+	        }
+	        /** @docsNotRequired */
+	        NavigationCancel.prototype.toString = function () { return "NavigationCancel(id: " + this.id + ", url: '" + this.url + "')"; };
+	        return NavigationCancel;
+	    }());
+	    /**
+	     * @whatItDoes Represents an event triggered when a navigation fails due to an unexpected error.
+	     *
+	     * @stable
+	     */
+	    var NavigationError = (function () {
+	        // TODO: vsavkin: make internal
+	        function NavigationError(
+	            /** @docsNotRequired */
+	            id,
+	            /** @docsNotRequired */
+	            url,
+	            /** @docsNotRequired */
+	            error) {
+	            this.id = id;
+	            this.url = url;
+	            this.error = error;
+	        }
+	        /** @docsNotRequired */
+	        NavigationError.prototype.toString = function () {
+	            return "NavigationError(id: " + this.id + ", url: '" + this.url + "', error: " + this.error + ")";
+	        };
+	        return NavigationError;
+	    }());
+	    /**
+	     * @whatItDoes Represents an event triggered when routes are recognized.
+	     *
+	     * @stable
+	     */
+	    var RoutesRecognized = (function () {
+	        // TODO: vsavkin: make internal
+	        function RoutesRecognized(
+	            /** @docsNotRequired */
+	            id,
+	            /** @docsNotRequired */
+	            url,
+	            /** @docsNotRequired */
+	            urlAfterRedirects,
+	            /** @docsNotRequired */
+	            state) {
+	            this.id = id;
+	            this.url = url;
+	            this.urlAfterRedirects = urlAfterRedirects;
+	            this.state = state;
+	        }
+	        /** @docsNotRequired */
+	        RoutesRecognized.prototype.toString = function () {
+	            return "RoutesRecognized(id: " + this.id + ", url: '" + this.url + "', urlAfterRedirects: '" + this.urlAfterRedirects + "', state: " + this.state + ")";
+	        };
+	        return RoutesRecognized;
+	    }());
+	    function defaultErrorHandler(error) {
+	        throw error;
+	    }
+	    /**
+	     * @whatItDoes Provides the navigation and url manipulation capabilities.
+	     *
+	     * See {@link Routes} for more details and examples.
+	     *
+	     * @ngModule RouterModule
+	     *
+	     * @stable
+	     */
+	    var Router = (function () {
+	        /**
+	         * Creates the router service.
+	         */
+	        // TODO: vsavkin make internal after the final is out.
+	        function Router(rootComponentType, urlSerializer, outletMap, location, injector, loader, compiler, config) {
+	            this.rootComponentType = rootComponentType;
+	            this.urlSerializer = urlSerializer;
+	            this.outletMap = outletMap;
+	            this.location = location;
+	            this.injector = injector;
+	            this.config = config;
+	            this.navigationId = 0;
+	            /**
+	             * Error handler that is invoked when a navigation errors.
+	             *
+	             * See {@link ErrorHandler} for more information.
+	             */
+	            this.errorHandler = defaultErrorHandler;
+	            /**
+	             * Indicates if at least one navigation happened.
+	             */
+	            this.navigated = false;
+	            this.resetConfig(config);
+	            this.routerEvents = new rxjs_Subject.Subject();
+	            this.currentUrlTree = createEmptyUrlTree();
+	            this.configLoader = new RouterConfigLoader(loader, compiler);
+	            this.currentRouterState = createEmptyState(this.currentUrlTree, this.rootComponentType);
+	        }
+	        /**
+	         * Sets up the location change listener and performs the initial navigation.
+	         */
+	        Router.prototype.initialNavigation = function () {
+	            this.setUpLocationChangeListener();
+	            this.navigateByUrl(this.location.path(true), { replaceUrl: true });
+	        };
+	        /**
+	         * Sets up the location change listener.
+	         */
+	        Router.prototype.setUpLocationChangeListener = function () {
+	            var _this = this;
+	            // Zone.current.wrap is needed because of the issue with RxJS scheduler,
+	            // which does not work properly with zone.js in IE and Safari
+	            this.locationSubscription = this.location.subscribe(Zone.current.wrap(function (change) {
+	                var tree = _this.urlSerializer.parse(change['url']);
+	                // we fire multiple events for a single URL change
+	                // we should navigate only once
+	                return _this.currentUrlTree.toString() !== tree.toString() ?
+	                    _this.scheduleNavigation(tree, { skipLocationChange: change['pop'], replaceUrl: true }) :
+	                    null;
+	            }));
+	        };
+	        Object.defineProperty(Router.prototype, "routerState", {
+	            /**
+	             * Returns the current route state.
+	             */
+	            get: function () { return this.currentRouterState; },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(Router.prototype, "url", {
+	            /**
+	             * Returns the current url.
+	             */
+	            get: function () { return this.serializeUrl(this.currentUrlTree); },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(Router.prototype, "events", {
+	            /**
+	             * Returns an observable of route events
+	             */
+	            get: function () { return this.routerEvents; },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        /**
+	         * Resets the configuration used for navigation and generating links.
+	         *
+	         * ### Usage
+	         *
+	         * ```
+	         * router.resetConfig([
+	         *  { path: 'team/:id', component: TeamCmp, children: [
+	         *    { path: 'simple', component: SimpleCmp },
+	         *    { path: 'user/:name', component: UserCmp }
+	         *  ] }
+	         * ]);
+	         * ```
+	         */
+	        Router.prototype.resetConfig = function (config) {
+	            validateConfig(config);
+	            this.config = config;
+	        };
+	        /**
+	         * @docsNotRequired
+	         */
+	        Router.prototype.ngOnDestroy = function () { this.dispose(); };
+	        /**
+	         * Disposes of the router.
+	         */
+	        Router.prototype.dispose = function () { this.locationSubscription.unsubscribe(); };
+	        /**
+	         * Applies an array of commands to the current url tree and creates a new url tree.
+	         *
+	         * When given an activate route, applies the given commands starting from the route.
+	         * When not given a route, applies the given command starting from the root.
+	         *
+	         * ### Usage
+	         *
+	         * ```
+	         * // create /team/33/user/11
+	         * router.createUrlTree(['/team', 33, 'user', 11]);
+	         *
+	         * // create /team/33;expand=true/user/11
+	         * router.createUrlTree(['/team', 33, {expand: true}, 'user', 11]);
+	         *
+	         * // you can collapse static segments like this (this works only with the first passed-in value):
+	         * router.createUrlTree(['/team/33/user', userId]);
+	         *
+	         * // If the first segment can contain slashes, and you do not want the router to split it, you
+	         * // can do the following:
+	         *
+	         * router.createUrlTree([{segmentPath: '/one/two'}]);
+	         *
+	         * // create /team/33/(user/11//right:chat)
+	         * router.createUrlTree(['/team', 33, {outlets: {primary: 'user/11', right: 'chat'}}]);
+	         *
+	         * // remove the right secondary node
+	         * router.createUrlTree(['/team', 33, {outlets: {primary: 'user/11', right: null}}]);
+	         *
+	         * // assuming the current url is `/team/33/user/11` and the route points to `user/11`
+	         *
+	         * // navigate to /team/33/user/11/details
+	         * router.createUrlTree(['details'], {relativeTo: route});
+	         *
+	         * // navigate to /team/33/user/22
+	         * router.createUrlTree(['../22'], {relativeTo: route});
+	         *
+	         * // navigate to /team/44/user/22
+	         * router.createUrlTree(['../../team/44/user/22'], {relativeTo: route});
+	         * ```
+	         */
+	        Router.prototype.createUrlTree = function (commands, _a) {
+	            var _b = _a === void 0 ? {} : _a, relativeTo = _b.relativeTo, queryParams = _b.queryParams, fragment = _b.fragment, preserveQueryParams = _b.preserveQueryParams, preserveFragment = _b.preserveFragment;
+	            var a = relativeTo ? relativeTo : this.routerState.root;
+	            var q = preserveQueryParams ? this.currentUrlTree.queryParams : queryParams;
+	            var f = preserveFragment ? this.currentUrlTree.fragment : fragment;
+	            return createUrlTree(a, this.currentUrlTree, commands, q, f);
+	        };
+	        /**
+	         * Navigate based on the provided url. This navigation is always absolute.
+	         *
+	         * Returns a promise that:
+	         * - is resolved with 'true' when navigation succeeds
+	         * - is resolved with 'false' when navigation fails
+	         * - is rejected when an error happens
+	         *
+	         * ### Usage
+	         *
+	         * ```
+	         * router.navigateByUrl("/team/33/user/11");
+	         *
+	         * // Navigate without updating the URL
+	         * router.navigateByUrl("/team/33/user/11", { skipLocationChange: true });
+	         * ```
+	         *
+	         * In opposite to `navigate`, `navigateByUrl` takes a whole URL
+	         * and does not apply any delta to the current one.
+	         */
+	        Router.prototype.navigateByUrl = function (url, extras) {
+	            if (extras === void 0) { extras = { skipLocationChange: false }; }
+	            if (url instanceof UrlTree) {
+	                return this.scheduleNavigation(url, extras);
+	            }
+	            else {
+	                var urlTree = this.urlSerializer.parse(url);
+	                return this.scheduleNavigation(urlTree, extras);
+	            }
+	        };
+	        /**
+	         * Navigate based on the provided array of commands and a starting point.
+	         * If no starting route is provided, the navigation is absolute.
+	         *
+	         * Returns a promise that:
+	         * - is resolved with 'true' when navigation succeeds
+	         * - is resolved with 'false' when navigation fails
+	         * - is rejected when an error happens
+	         *
+	         * ### Usage
+	         *
+	         * ```
+	         * router.navigate(['team', 33, 'user', 11], {relativeTo: route});
+	         *
+	         * // Navigate without updating the URL
+	         * router.navigate(['team', 33, 'user', 11], {relativeTo: route, skipLocationChange: true });
+	         * ```
+	         *
+	         * In opposite to `navigateByUrl`, `navigate` always takes a delta
+	         * that is applied to the current URL.
+	         */
+	        Router.prototype.navigate = function (commands, extras) {
+	            if (extras === void 0) { extras = { skipLocationChange: false }; }
+	            return this.scheduleNavigation(this.createUrlTree(commands, extras), extras);
+	        };
+	        /**
+	         * Serializes a {@link UrlTree} into a string.
+	         */
+	        Router.prototype.serializeUrl = function (url) { return this.urlSerializer.serialize(url); };
+	        /**
+	         * Parses a string into a {@link UrlTree}.
+	         */
+	        Router.prototype.parseUrl = function (url) { return this.urlSerializer.parse(url); };
+	        /**
+	         * Returns if the url is activated or not.
+	         */
+	        Router.prototype.isActive = function (url, exact) {
+	            if (url instanceof UrlTree) {
+	                return containsTree(this.currentUrlTree, url, exact);
+	            }
+	            else {
+	                var urlTree = this.urlSerializer.parse(url);
+	                return containsTree(this.currentUrlTree, urlTree, exact);
+	            }
+	        };
+	        Router.prototype.scheduleNavigation = function (url, extras) {
+	            var _this = this;
+	            var id = ++this.navigationId;
+	            this.routerEvents.next(new NavigationStart(id, this.serializeUrl(url)));
+	            return Promise.resolve().then(function (_) { return _this.runNavigate(url, extras.skipLocationChange, extras.replaceUrl, id); });
+	        };
+	        Router.prototype.runNavigate = function (url, shouldPreventPushState, shouldReplaceUrl, id) {
+	            var _this = this;
+	            if (id !== this.navigationId) {
+	                this.location.go(this.urlSerializer.serialize(this.currentUrlTree));
+	                this.routerEvents.next(new NavigationCancel(id, this.serializeUrl(url), "Navigation ID " + id + " is not equal to the current navigation id " + this.navigationId));
+	                return Promise.resolve(false);
+	            }
+	            return new Promise(function (resolvePromise, rejectPromise) {
+	                var state;
+	                var navigationIsSuccessful;
+	                var preActivation;
+	                var appliedUrl;
+	                var storedState = _this.currentRouterState;
+	                var storedUrl = _this.currentUrlTree;
+	                var redirectsApplied$ = applyRedirects(_this.injector, _this.configLoader, url, _this.config);
+	                var snapshot$ = rxjs_operator_mergeMap.mergeMap.call(redirectsApplied$, function (u) {
+	                    appliedUrl = u;
+	                    return recognize(_this.rootComponentType, _this.config, appliedUrl, _this.serializeUrl(appliedUrl));
+	                });
+	                var emitRecognzied$ = rxjs_operator_map.map.call(snapshot$, function (newRouterStateSnapshot) {
+	                    _this.routerEvents.next(new RoutesRecognized(id, _this.serializeUrl(url), _this.serializeUrl(appliedUrl), newRouterStateSnapshot));
+	                    return newRouterStateSnapshot;
+	                });
+	                var routerState$ = rxjs_operator_map.map.call(emitRecognzied$, function (routerStateSnapshot) {
+	                    return createRouterState(routerStateSnapshot, _this.currentRouterState);
+	                });
+	                var preactivation$ = rxjs_operator_map.map.call(routerState$, function (newState) {
+	                    state = newState;
+	                    preActivation =
+	                        new PreActivation(state.snapshot, _this.currentRouterState.snapshot, _this.injector);
+	                    preActivation.traverse(_this.outletMap);
+	                });
+	                var preactivation2$ = rxjs_operator_mergeMap.mergeMap.call(preactivation$, function () { return preActivation.checkGuards(); });
+	                var resolveData$ = rxjs_operator_mergeMap.mergeMap.call(preactivation2$, function (shouldActivate) {
+	                    if (shouldActivate) {
+	                        return rxjs_operator_map.map.call(preActivation.resolveData(), function () { return shouldActivate; });
+	                    }
+	                    else {
+	                        return rxjs_observable_of.of(shouldActivate);
+	                    }
+	                });
+	                resolveData$
+	                    .forEach(function (shouldActivate) {
+	                    if (!shouldActivate || id !== _this.navigationId) {
+	                        navigationIsSuccessful = false;
+	                        return;
+	                    }
+	                    _this.currentUrlTree = appliedUrl;
+	                    _this.currentRouterState = state;
+	                    if (!shouldPreventPushState) {
+	                        var path = _this.urlSerializer.serialize(appliedUrl);
+	                        if (_this.location.isCurrentPathEqualTo(path) || shouldReplaceUrl) {
+	                            _this.location.replaceState(path);
+	                        }
+	                        else {
+	                            _this.location.go(path);
+	                        }
+	                    }
+	                    new ActivateRoutes(state, storedState).activate(_this.outletMap);
+	                    navigationIsSuccessful = true;
+	                })
+	                    .then(function () {
+	                    _this.navigated = true;
+	                    if (navigationIsSuccessful) {
+	                        _this.routerEvents.next(new NavigationEnd(id, _this.serializeUrl(url), _this.serializeUrl(appliedUrl)));
+	                        resolvePromise(true);
+	                    }
+	                    else {
+	                        _this.routerEvents.next(new NavigationCancel(id, _this.serializeUrl(url), ''));
+	                        resolvePromise(false);
+	                    }
+	                }, function (e) {
+	                    if (e instanceof NavigationCancelingError) {
+	                        _this.navigated = true;
+	                        _this.routerEvents.next(new NavigationCancel(id, _this.serializeUrl(url), e.message));
+	                        resolvePromise(false);
+	                    }
+	                    else {
+	                        _this.routerEvents.next(new NavigationError(id, _this.serializeUrl(url), e));
+	                        try {
+	                            resolvePromise(_this.errorHandler(e));
+	                        }
+	                        catch (ee) {
+	                            rejectPromise(ee);
+	                        }
+	                    }
+	                    if (id === _this.navigationId) {
+	                        _this.currentRouterState = storedState;
+	                        _this.currentUrlTree = storedUrl;
+	                        _this.location.replaceState(_this.serializeUrl(storedUrl));
+	                    }
+	                });
+	            });
+	        };
+	        return Router;
+	    }());
+	    var CanActivate = (function () {
+	        function CanActivate(path) {
+	            this.path = path;
+	        }
+	        Object.defineProperty(CanActivate.prototype, "route", {
+	            get: function () { return this.path[this.path.length - 1]; },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        return CanActivate;
+	    }());
+	    var CanDeactivate = (function () {
+	        function CanDeactivate(component, route) {
+	            this.component = component;
+	            this.route = route;
+	        }
+	        return CanDeactivate;
+	    }());
+	    var PreActivation = (function () {
+	        function PreActivation(future, curr, injector) {
+	            this.future = future;
+	            this.curr = curr;
+	            this.injector = injector;
+	            this.checks = [];
+	        }
+	        PreActivation.prototype.traverse = function (parentOutletMap) {
+	            var futureRoot = this.future._root;
+	            var currRoot = this.curr ? this.curr._root : null;
+	            this.traverseChildRoutes(futureRoot, currRoot, parentOutletMap, [futureRoot.value]);
+	        };
+	        PreActivation.prototype.checkGuards = function () {
+	            var _this = this;
+	            if (this.checks.length === 0)
+	                return rxjs_observable_of.of(true);
+	            var checks$ = rxjs_observable_from.from(this.checks);
+	            var runningChecks$ = rxjs_operator_map.map.call(checks$, function (s) {
+	                if (s instanceof CanActivate) {
+	                    return andObservables(rxjs_observable_from.from([_this.runCanActivateChild(s.path), _this.runCanActivate(s.route)]));
+	                }
+	                else if (s instanceof CanDeactivate) {
+	                    // workaround https://github.com/Microsoft/TypeScript/issues/7271
+	                    var s2 = s;
+	                    return _this.runCanDeactivate(s2.component, s2.route);
+	                }
+	                else {
+	                    throw new Error('Cannot be reached');
+	                }
+	            });
+	            var mergedChecks$ = rxjs_operator_mergeAll.mergeAll.call(runningChecks$);
+	            return rxjs_operator_every.every.call(mergedChecks$, function (result) { return result === true; });
+	        };
+	        PreActivation.prototype.resolveData = function () {
+	            var _this = this;
+	            if (this.checks.length === 0)
+	                return rxjs_observable_of.of(null);
+	            var checks$ = rxjs_observable_from.from(this.checks);
+	            var runningChecks$ = rxjs_operator_mergeMap.mergeMap.call(checks$, function (s) {
+	                if (s instanceof CanActivate) {
+	                    return _this.runResolve(s.route);
+	                }
+	                else {
+	                    return rxjs_observable_of.of(null);
+	                }
+	            });
+	            return rxjs_operator_reduce.reduce.call(runningChecks$, function (_, __) { return _; });
+	        };
+	        PreActivation.prototype.traverseChildRoutes = function (futureNode, currNode, outletMap, futurePath) {
+	            var _this = this;
+	            var prevChildren = nodeChildrenAsMap(currNode);
+	            futureNode.children.forEach(function (c) {
+	                _this.traverseRoutes(c, prevChildren[c.value.outlet], outletMap, futurePath.concat([c.value]));
+	                delete prevChildren[c.value.outlet];
+	            });
+	            forEach(prevChildren, function (v, k) { return _this.deactivateOutletAndItChildren(v, outletMap._outlets[k]); });
+	        };
+	        PreActivation.prototype.traverseRoutes = function (futureNode, currNode, parentOutletMap, futurePath) {
+	            var future = futureNode.value;
+	            var curr = currNode ? currNode.value : null;
+	            var outlet = parentOutletMap ? parentOutletMap._outlets[futureNode.value.outlet] : null;
+	            // reusing the node
+	            if (curr && future._routeConfig === curr._routeConfig) {
+	                if (!shallowEqual(future.params, curr.params)) {
+	                    this.checks.push(new CanDeactivate(outlet.component, curr), new CanActivate(futurePath));
+	                }
+	                else {
+	                    // we need to set the data
+	                    future.data = curr.data;
+	                }
+	                // If we have a component, we need to go through an outlet.
+	                if (future.component) {
+	                    this.traverseChildRoutes(futureNode, currNode, outlet ? outlet.outletMap : null, futurePath);
+	                }
+	                else {
+	                    this.traverseChildRoutes(futureNode, currNode, parentOutletMap, futurePath);
+	                }
+	            }
+	            else {
+	                if (curr) {
+	                    // if we had a normal route, we need to deactivate only that outlet.
+	                    if (curr.component) {
+	                        this.deactivateOutletAndItChildren(curr, outlet);
+	                    }
+	                    else {
+	                        this.deactivateOutletMap(parentOutletMap);
+	                    }
+	                }
+	                this.checks.push(new CanActivate(futurePath));
+	                // If we have a component, we need to go through an outlet.
+	                if (future.component) {
+	                    this.traverseChildRoutes(futureNode, null, outlet ? outlet.outletMap : null, futurePath);
+	                }
+	                else {
+	                    this.traverseChildRoutes(futureNode, null, parentOutletMap, futurePath);
+	                }
+	            }
+	        };
+	        PreActivation.prototype.deactivateOutletAndItChildren = function (route, outlet) {
+	            if (outlet && outlet.isActivated) {
+	                this.deactivateOutletMap(outlet.outletMap);
+	                this.checks.push(new CanDeactivate(outlet.component, route));
+	            }
+	        };
+	        PreActivation.prototype.deactivateOutletMap = function (outletMap) {
+	            var _this = this;
+	            forEach(outletMap._outlets, function (v) {
+	                if (v.isActivated) {
+	                    _this.deactivateOutletAndItChildren(v.activatedRoute.snapshot, v);
+	                }
+	            });
+	        };
+	        PreActivation.prototype.runCanActivate = function (future) {
+	            var _this = this;
+	            var canActivate = future._routeConfig ? future._routeConfig.canActivate : null;
+	            if (!canActivate || canActivate.length === 0)
+	                return rxjs_observable_of.of(true);
+	            var obs = rxjs_operator_map.map.call(rxjs_observable_from.from(canActivate), function (c) {
+	                var guard = _this.getToken(c, future);
+	                if (guard.canActivate) {
+	                    return wrapIntoObservable(guard.canActivate(future, _this.future));
+	                }
+	                else {
+	                    return wrapIntoObservable(guard(future, _this.future));
+	                }
+	            });
+	            return andObservables(obs);
+	        };
+	        PreActivation.prototype.runCanActivateChild = function (path) {
+	            var _this = this;
+	            var future = path[path.length - 1];
+	            var canActivateChildGuards = path.slice(0, path.length - 1)
+	                .reverse()
+	                .map(function (p) { return _this.extractCanActivateChild(p); })
+	                .filter(function (_) { return _ !== null; });
+	            return andObservables(rxjs_operator_map.map.call(rxjs_observable_from.from(canActivateChildGuards), function (d) {
+	                var obs = rxjs_operator_map.map.call(rxjs_observable_from.from(d.guards), function (c) {
+	                    var guard = _this.getToken(c, c.node);
+	                    if (guard.canActivateChild) {
+	                        return wrapIntoObservable(guard.canActivateChild(future, _this.future));
+	                    }
+	                    else {
+	                        return wrapIntoObservable(guard(future, _this.future));
+	                    }
+	                });
+	                return andObservables(obs);
+	            }));
+	        };
+	        PreActivation.prototype.extractCanActivateChild = function (p) {
+	            var canActivateChild = p._routeConfig ? p._routeConfig.canActivateChild : null;
+	            if (!canActivateChild || canActivateChild.length === 0)
+	                return null;
+	            return { node: p, guards: canActivateChild };
+	        };
+	        PreActivation.prototype.runCanDeactivate = function (component, curr) {
+	            var _this = this;
+	            var canDeactivate = curr && curr._routeConfig ? curr._routeConfig.canDeactivate : null;
+	            if (!canDeactivate || canDeactivate.length === 0)
+	                return rxjs_observable_of.of(true);
+	            var canDeactivate$ = rxjs_operator_map.map.call(rxjs_observable_from.from(canDeactivate), function (c) {
+	                var guard = _this.getToken(c, curr);
+	                if (guard.canDeactivate) {
+	                    return wrapIntoObservable(guard.canDeactivate(component, curr, _this.curr));
+	                }
+	                else {
+	                    return wrapIntoObservable(guard(component, curr, _this.curr));
+	                }
+	            });
+	            var merged$ = rxjs_operator_mergeAll.mergeAll.call(canDeactivate$);
+	            return rxjs_operator_every.every.call(merged$, function (result) { return result === true; });
+	        };
+	        PreActivation.prototype.runResolve = function (future) {
+	            var resolve = future._resolve;
+	            return rxjs_operator_map.map.call(this.resolveNode(resolve.current, future), function (resolvedData) {
+	                resolve.resolvedData = resolvedData;
+	                future.data = merge(future.data, resolve.flattenedResolvedData);
+	                return null;
+	            });
+	        };
+	        PreActivation.prototype.resolveNode = function (resolve, future) {
+	            var _this = this;
+	            return waitForMap(resolve, function (k, v) {
+	                var resolver = _this.getToken(v, future);
+	                return resolver.resolve ? wrapIntoObservable(resolver.resolve(future, _this.future)) :
+	                    wrapIntoObservable(resolver(future, _this.future));
+	            });
+	        };
+	        PreActivation.prototype.getToken = function (token, snapshot) {
+	            var config = closestLoadedConfig(snapshot);
+	            var injector = config ? config.injector : this.injector;
+	            return injector.get(token);
+	        };
+	        return PreActivation;
+	    }());
+	    var ActivateRoutes = (function () {
+	        function ActivateRoutes(futureState, currState) {
+	            this.futureState = futureState;
+	            this.currState = currState;
+	        }
+	        ActivateRoutes.prototype.activate = function (parentOutletMap) {
+	            var futureRoot = this.futureState._root;
+	            var currRoot = this.currState ? this.currState._root : null;
+	            advanceActivatedRoute(this.futureState.root);
+	            this.activateChildRoutes(futureRoot, currRoot, parentOutletMap);
+	        };
+	        ActivateRoutes.prototype.activateChildRoutes = function (futureNode, currNode, outletMap) {
+	            var _this = this;
+	            var prevChildren = nodeChildrenAsMap(currNode);
+	            futureNode.children.forEach(function (c) {
+	                _this.activateRoutes(c, prevChildren[c.value.outlet], outletMap);
+	                delete prevChildren[c.value.outlet];
+	            });
+	            forEach(prevChildren, function (v, k) { return _this.deactivateOutletAndItChildren(outletMap._outlets[k]); });
+	        };
+	        ActivateRoutes.prototype.activateRoutes = function (futureNode, currNode, parentOutletMap) {
+	            var future = futureNode.value;
+	            var curr = currNode ? currNode.value : null;
+	            // reusing the node
+	            if (future === curr) {
+	                // advance the route to push the parameters
+	                advanceActivatedRoute(future);
+	                // If we have a normal route, we need to go through an outlet.
+	                if (future.component) {
+	                    var outlet = getOutlet(parentOutletMap, futureNode.value);
+	                    this.activateChildRoutes(futureNode, currNode, outlet.outletMap);
+	                }
+	                else {
+	                    this.activateChildRoutes(futureNode, currNode, parentOutletMap);
+	                }
+	            }
+	            else {
+	                if (curr) {
+	                    // if we had a normal route, we need to deactivate only that outlet.
+	                    if (curr.component) {
+	                        var outlet = getOutlet(parentOutletMap, futureNode.value);
+	                        this.deactivateOutletAndItChildren(outlet);
+	                    }
+	                    else {
+	                        this.deactivateOutletMap(parentOutletMap);
+	                    }
+	                }
+	                // if we have a normal route, we need to advance the route
+	                // and place the component into the outlet. After that recurse.
+	                if (future.component) {
+	                    advanceActivatedRoute(future);
+	                    var outlet = getOutlet(parentOutletMap, futureNode.value);
+	                    var outletMap = new RouterOutletMap();
+	                    this.placeComponentIntoOutlet(outletMap, future, outlet);
+	                    this.activateChildRoutes(futureNode, null, outletMap);
+	                }
+	                else {
+	                    advanceActivatedRoute(future);
+	                    this.activateChildRoutes(futureNode, null, parentOutletMap);
+	                }
+	            }
+	        };
+	        ActivateRoutes.prototype.placeComponentIntoOutlet = function (outletMap, future, outlet) {
+	            var resolved = [{ provide: ActivatedRoute, useValue: future }, {
+	                    provide: RouterOutletMap,
+	                    useValue: outletMap
+	                }];
+	            var config = parentLoadedConfig(future.snapshot);
+	            var loadedFactoryResolver = null;
+	            var loadedInjector = null;
+	            if (config) {
+	                loadedFactoryResolver = config.factoryResolver;
+	                loadedInjector = config.injector;
+	                resolved.push({ provide: _angular_core.ComponentFactoryResolver, useValue: loadedFactoryResolver });
+	            }
+	            outlet.activate(future, loadedFactoryResolver, loadedInjector, _angular_core.ReflectiveInjector.resolve(resolved), outletMap);
+	        };
+	        ActivateRoutes.prototype.deactivateOutletAndItChildren = function (outlet) {
+	            if (outlet && outlet.isActivated) {
+	                this.deactivateOutletMap(outlet.outletMap);
+	                outlet.deactivate();
+	            }
+	        };
+	        ActivateRoutes.prototype.deactivateOutletMap = function (outletMap) {
+	            var _this = this;
+	            forEach(outletMap._outlets, function (v) { return _this.deactivateOutletAndItChildren(v); });
+	        };
+	        return ActivateRoutes;
+	    }());
+	    function parentLoadedConfig(snapshot) {
+	        var s = snapshot.parent;
+	        while (s) {
+	            var c = s._routeConfig;
+	            if (c && c._loadedConfig)
+	                return c._loadedConfig;
+	            if (c && c.component)
+	                return null;
+	            s = s.parent;
+	        }
+	        return null;
+	    }
+	    function closestLoadedConfig(snapshot) {
+	        if (!snapshot)
+	            return null;
+	        var s = snapshot.parent;
+	        while (s) {
+	            var c = s._routeConfig;
+	            if (c && c._loadedConfig)
+	                return c._loadedConfig;
+	            s = s.parent;
+	        }
+	        return null;
+	    }
+	    function nodeChildrenAsMap(node) {
+	        return node ? node.children.reduce(function (m, c) {
+	            m[c.value.outlet] = c;
+	            return m;
+	        }, {}) : {};
+	    }
+	    function getOutlet(outletMap, route) {
+	        var outlet = outletMap._outlets[route.outlet];
+	        if (!outlet) {
+	            var componentName = route.component.name;
+	            if (route.outlet === PRIMARY_OUTLET) {
+	                throw new Error("Cannot find primary outlet to load '" + componentName + "'");
+	            }
+	            else {
+	                throw new Error("Cannot find the outlet " + route.outlet + " to load '" + componentName + "'");
+	            }
+	        }
+	        return outlet;
+	    }
+	
+	    /**
+	     * @whatItDoes Lets you link to specific parts of your app.
+	     *
+	     * @howToUse
+	     *
+	     * Consider the following route configuration:
+	
+	     * ```
+	     * [{ path: 'user/:name', component: UserCmp }]
+	     * ```
+	     *
+	     * When linking to this `user/:name` route, you can write:
+	     *
+	     * ```
+	     * <a routerLink='/user/bob'>link to user component</a>
+	     * ```
+	     *
+	     * @description
+	     *
+	     * The RouterLink directives let you link to specific parts of your app.
+	     *
+	     * Whe the link is static, you can use the directive as follows:
+	     *
+	     * ```
+	     * <a routerLink="/user/bob">link to user component</a>
+	     * ```
+	     *
+	     * If you use dynamic values to generate the link, you can pass an array of path
+	     * segments, followed by the params for each segment.
+	     *
+	     * For instance `['/team', teamId, 'user', userName, {details: true}]`
+	     * means that we want to generate a link to `/team/11/user/bob;details=true`.
+	     *
+	     * Multiple static segments can be merged into one (e.g., `['/team/11/user', userName, {details:
+	     true}]`).
+	     *
+	     * The first segment name can be prepended with `/`, `./`, or `../`:
+	     * * If the first segment begins with `/`, the router will look up the route from the root of the
+	     app.
+	     * * If the first segment begins with `./`, or doesn't begin with a slash, the router will
+	     * instead look in the children of the current activated route.
+	     * * And if the first segment begins with `../`, the router will go up one level.
+	     *
+	     * You can set query params and fragment as follows:
+	     *
+	     * ```
+	     * <a [routerLink]="['/user/bob']" [queryParams]="{debug: true}" fragment="education">link to user
+	     component</a>
+	     * ```
+	     * RouterLink will use these to generate this link: `/user/bob#education?debug=true`.
+	     *
+	     * You can also tell the directive to preserve the current query params and fragment:
+	     *
+	     * ```
+	     * <a [routerLink]="['/user/bob']" preserveQueryParams preserveFragment>link to user
+	     component</a>
+	     * ```
+	     *
+	     * The router link directive always treats the provided input as a delta to the current url.
+	     *
+	     * For instance, if the current url is `/user/(box//aux:team)`.
+	     *
+	     * Then the following link `<a [routerLink]="['/user/jim']">Jim</a>` will generate the link
+	     * `/user/(jim//aux:team)`.
+	     *
+	     * @selector ':not(a)[routerLink]'
+	     * @ngModule RouterModule
+	     *
+	     * See {@link Router.createUrlTree} for more information.
+	     *
+	     * @stable
+	     */
+	    var RouterLink = (function () {
+	        function RouterLink(router, route, locationStrategy) {
+	            this.router = router;
+	            this.route = route;
+	            this.locationStrategy = locationStrategy;
+	            this.commands = [];
+	        }
+	        Object.defineProperty(RouterLink.prototype, "routerLink", {
+	            set: function (data) {
+	                if (Array.isArray(data)) {
+	                    this.commands = data;
+	                }
+	                else {
+	                    this.commands = [data];
+	                }
+	            },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        RouterLink.prototype.onClick = function (button, ctrlKey, metaKey) {
+	            if (button !== 0 || ctrlKey || metaKey) {
+	                return true;
+	            }
+	            this.router.navigateByUrl(this.urlTree);
+	            return false;
+	        };
+	        Object.defineProperty(RouterLink.prototype, "urlTree", {
+	            get: function () {
+	                return this.router.createUrlTree(this.commands, {
+	                    relativeTo: this.route,
+	                    queryParams: this.queryParams,
+	                    fragment: this.fragment,
+	                    preserveQueryParams: toBool(this.preserveQueryParams),
+	                    preserveFragment: toBool(this.preserveFragment)
+	                });
+	            },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        RouterLink.decorators = [
+	            { type: _angular_core.Directive, args: [{ selector: ':not(a)[routerLink]' },] },
+	        ];
+	        /** @nocollapse */
+	        RouterLink.ctorParameters = [
+	            { type: Router, },
+	            { type: ActivatedRoute, },
+	            { type: _angular_common.LocationStrategy, },
+	        ];
+	        RouterLink.propDecorators = {
+	            'queryParams': [{ type: _angular_core.Input },],
+	            'fragment': [{ type: _angular_core.Input },],
+	            'preserveQueryParams': [{ type: _angular_core.Input },],
+	            'preserveFragment': [{ type: _angular_core.Input },],
+	            'routerLink': [{ type: _angular_core.Input },],
+	            'onClick': [{ type: _angular_core.HostListener, args: ['click', ['$event.button', '$event.ctrlKey', '$event.metaKey'],] },],
+	        };
+	        return RouterLink;
+	    }());
+	    /**
+	     * @whatItDoes Lets you link to specific parts of your app.
+	     *
+	     * See {@link RouterLink} for more information.
+	     *
+	     * @selector 'a[routerLink]'
+	     * @ngModule RouterModule
+	     *
+	     * @stable
+	     */
+	    var RouterLinkWithHref = (function () {
+	        function RouterLinkWithHref(router, route, locationStrategy) {
+	            var _this = this;
+	            this.router = router;
+	            this.route = route;
+	            this.locationStrategy = locationStrategy;
+	            this.commands = [];
+	            this.subscription = router.events.subscribe(function (s) {
+	                if (s instanceof NavigationEnd) {
+	                    _this.updateTargetUrlAndHref();
+	                }
+	            });
+	        }
+	        Object.defineProperty(RouterLinkWithHref.prototype, "routerLink", {
+	            set: function (data) {
+	                if (Array.isArray(data)) {
+	                    this.commands = data;
+	                }
+	                else {
+	                    this.commands = [data];
+	                }
+	            },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        RouterLinkWithHref.prototype.ngOnChanges = function (changes) { this.updateTargetUrlAndHref(); };
+	        RouterLinkWithHref.prototype.ngOnDestroy = function () { this.subscription.unsubscribe(); };
+	        RouterLinkWithHref.prototype.onClick = function (button, ctrlKey, metaKey) {
+	            if (button !== 0 || ctrlKey || metaKey) {
+	                return true;
+	            }
+	            if (typeof this.target === 'string' && this.target != '_self') {
+	                return true;
+	            }
+	            this.router.navigateByUrl(this.urlTree);
+	            return false;
+	        };
+	        RouterLinkWithHref.prototype.updateTargetUrlAndHref = function () {
+	            this.href = this.locationStrategy.prepareExternalUrl(this.router.serializeUrl(this.urlTree));
+	        };
+	        Object.defineProperty(RouterLinkWithHref.prototype, "urlTree", {
+	            get: function () {
+	                return this.router.createUrlTree(this.commands, {
+	                    relativeTo: this.route,
+	                    queryParams: this.queryParams,
+	                    fragment: this.fragment,
+	                    preserveQueryParams: toBool(this.preserveQueryParams),
+	                    preserveFragment: toBool(this.preserveFragment)
+	                });
+	            },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        RouterLinkWithHref.decorators = [
+	            { type: _angular_core.Directive, args: [{ selector: 'a[routerLink]' },] },
+	        ];
+	        /** @nocollapse */
+	        RouterLinkWithHref.ctorParameters = [
+	            { type: Router, },
+	            { type: ActivatedRoute, },
+	            { type: _angular_common.LocationStrategy, },
+	        ];
+	        RouterLinkWithHref.propDecorators = {
+	            'target': [{ type: _angular_core.Input },],
+	            'queryParams': [{ type: _angular_core.Input },],
+	            'fragment': [{ type: _angular_core.Input },],
+	            'routerLinkOptions': [{ type: _angular_core.Input },],
+	            'preserveQueryParams': [{ type: _angular_core.Input },],
+	            'preserveFragment': [{ type: _angular_core.Input },],
+	            'href': [{ type: _angular_core.HostBinding },],
+	            'routerLink': [{ type: _angular_core.Input },],
+	            'onClick': [{ type: _angular_core.HostListener, args: ['click', ['$event.button', '$event.ctrlKey', '$event.metaKey'],] },],
+	        };
+	        return RouterLinkWithHref;
+	    }());
+	    function toBool(s) {
+	        if (s === '')
+	            return true;
+	        return !!s;
+	    }
+	
+	    /**
+	     * @whatItDoes Lets you add a CSS class to an element when the link's route becomes active.
+	     *
+	     * @howToUse
+	     *
+	     * ```
+	     * <a [routerLink]='/user/bob' routerLinkActive='active-link'>Bob</a>
+	     * ```
+	     *
+	     * @description
+	     *
+	     * The RouterLinkActive directive lets you add a CSS class to an element when the link's route
+	     * becomes active.
+	     *
+	     * Consider the following example:
+	     *
+	     * ```
+	     * <a [routerLink]="/user/bob" routerLinkActive="active-link">Bob</a>
+	     * ```
+	     *
+	     * When the url is either '/user' or '/user/bob', the active-link class will
+	     * be added to the `a` tag. If the url changes, the class will be removed.
+	     *
+	     * You can set more than one class, as follows:
+	     *
+	     * ```
+	     * <a [routerLink]="/user/bob" routerLinkActive="class1 class2">Bob</a>
+	     * <a [routerLink]="/user/bob" [routerLinkActive]="['class1', 'class2']">Bob</a>
+	     * ```
+	     *
+	     * You can configure RouterLinkActive by passing `exact: true`. This will add the classes
+	     * only when the url matches the link exactly.
+	     *
+	     * ```
+	     * <a [routerLink]="/user/bob" routerLinkActive="active-link" [routerLinkActiveOptions]="{exact:
+	     * true}">Bob</a>
+	     * ```
+	     *
+	     * Finally, you can apply the RouterLinkActive directive to an ancestor of a RouterLink.
+	     *
+	     * ```
+	     * <div routerLinkActive="active-link" [routerLinkActiveOptions]="{exact: true}">
+	     *   <a [routerLink]="/user/jim">Jim</a>
+	     *   <a [routerLink]="/user/bob">Bob</a>
+	     * </div>
+	     * ```
+	     *
+	     * This will set the active-link class on the div tag if the url is either '/user/jim' or
+	     * '/user/bob'.
+	     *
+	     * @selector ':not(a)[routerLink]'
+	     * @ngModule RouterModule
+	     *
+	     * @stable
+	     */
+	    var RouterLinkActive = (function () {
+	        function RouterLinkActive(router, element, renderer) {
+	            var _this = this;
+	            this.router = router;
+	            this.element = element;
+	            this.renderer = renderer;
+	            this.classes = [];
+	            this.routerLinkActiveOptions = { exact: false };
+	            this.subscription = router.events.subscribe(function (s) {
+	                if (s instanceof NavigationEnd) {
+	                    _this.update();
+	                }
+	            });
+	        }
+	        RouterLinkActive.prototype.ngAfterContentInit = function () {
+	            var _this = this;
+	            this.links.changes.subscribe(function (s) { return _this.update(); });
+	            this.linksWithHrefs.changes.subscribe(function (s) { return _this.update(); });
+	            this.update();
+	        };
+	        Object.defineProperty(RouterLinkActive.prototype, "routerLinkActive", {
+	            set: function (data) {
+	                if (Array.isArray(data)) {
+	                    this.classes = data;
+	                }
+	                else {
+	                    this.classes = data.split(' ');
+	                }
+	            },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        RouterLinkActive.prototype.ngOnChanges = function (changes) { this.update(); };
+	        RouterLinkActive.prototype.ngOnDestroy = function () { this.subscription.unsubscribe(); };
+	        RouterLinkActive.prototype.update = function () {
+	            var _this = this;
+	            if (!this.links || !this.linksWithHrefs || !this.router.navigated)
+	                return;
+	            var isActiveLinks = this.reduceList(this.links);
+	            var isActiveLinksWithHrefs = this.reduceList(this.linksWithHrefs);
+	            this.classes.forEach(function (c) { return _this.renderer.setElementClass(_this.element.nativeElement, c, isActiveLinks || isActiveLinksWithHrefs); });
+	        };
+	        RouterLinkActive.prototype.reduceList = function (q) {
+	            var _this = this;
+	            return q.reduce(function (res, link) {
+	                return res || _this.router.isActive(link.urlTree, _this.routerLinkActiveOptions.exact);
+	            }, false);
+	        };
+	        RouterLinkActive.decorators = [
+	            { type: _angular_core.Directive, args: [{ selector: '[routerLinkActive]' },] },
+	        ];
+	        /** @nocollapse */
+	        RouterLinkActive.ctorParameters = [
+	            { type: Router, },
+	            { type: _angular_core.ElementRef, },
+	            { type: _angular_core.Renderer, },
+	        ];
+	        RouterLinkActive.propDecorators = {
+	            'links': [{ type: _angular_core.ContentChildren, args: [RouterLink, { descendants: true },] },],
+	            'linksWithHrefs': [{ type: _angular_core.ContentChildren, args: [RouterLinkWithHref, { descendants: true },] },],
+	            'routerLinkActiveOptions': [{ type: _angular_core.Input },],
+	            'routerLinkActive': [{ type: _angular_core.Input },],
+	        };
+	        return RouterLinkActive;
+	    }());
+	
+	    /**
+	     * @whatItDoes Acts as a placeholder that Angular dynamically fills based on the current router
+	     * state.
+	     *
+	     * @howToUse
+	     *
+	     * ```
+	     * <router-outlet></router-outlet>
+	     * <router-outlet name='left'></router-outlet>
+	     * <router-outlet name='right'></router-outlet>
+	     * ```
+	     *
+	     * A router outlet will emit an activate event any time a new component is being instantiated,
+	     * and a deactivate event when it is being destroyed.
+	     *
+	     * ```
+	     * <router-outlet
+	     *   (activate)='onActivate($event)'
+	     *   (deactivate)='onDeactivate($event)'></router-outlet>
+	     * ```
+	     * @selector 'a[routerLink]'
+	     * @ngModule RouterModule
+	     *
+	     * @stable
+	     */
+	    var RouterOutlet = (function () {
+	        function RouterOutlet(parentOutletMap, location, resolver, name) {
+	            this.parentOutletMap = parentOutletMap;
+	            this.location = location;
+	            this.resolver = resolver;
+	            this.name = name;
+	            this.activateEvents = new _angular_core.EventEmitter();
+	            this.deactivateEvents = new _angular_core.EventEmitter();
+	            parentOutletMap.registerOutlet(name ? name : PRIMARY_OUTLET, this);
+	        }
+	        RouterOutlet.prototype.ngOnDestroy = function () { this.parentOutletMap.removeOutlet(this.name ? this.name : PRIMARY_OUTLET); };
+	        Object.defineProperty(RouterOutlet.prototype, "isActivated", {
+	            get: function () { return !!this.activated; },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(RouterOutlet.prototype, "component", {
+	            get: function () {
+	                if (!this.activated)
+	                    throw new Error('Outlet is not activated');
+	                return this.activated.instance;
+	            },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        Object.defineProperty(RouterOutlet.prototype, "activatedRoute", {
+	            get: function () {
+	                if (!this.activated)
+	                    throw new Error('Outlet is not activated');
+	                return this._activatedRoute;
+	            },
+	            enumerable: true,
+	            configurable: true
+	        });
+	        RouterOutlet.prototype.deactivate = function () {
+	            if (this.activated) {
+	                var c = this.component;
+	                this.activated.destroy();
+	                this.activated = null;
+	                this.deactivateEvents.emit(c);
+	            }
+	        };
+	        RouterOutlet.prototype.activate = function (activatedRoute, loadedResolver, loadedInjector, providers, outletMap) {
+	            this.outletMap = outletMap;
+	            this._activatedRoute = activatedRoute;
+	            var snapshot = activatedRoute._futureSnapshot;
+	            var component = snapshot._routeConfig.component;
+	            var factory;
+	            if (loadedResolver) {
+	                factory = loadedResolver.resolveComponentFactory(component);
+	            }
+	            else {
+	                factory = this.resolver.resolveComponentFactory(component);
+	            }
+	            var injector = loadedInjector ? loadedInjector : this.location.parentInjector;
+	            var inj = _angular_core.ReflectiveInjector.fromResolvedProviders(providers, injector);
+	            this.activated = this.location.createComponent(factory, this.location.length, inj, []);
+	            this.activated.changeDetectorRef.detectChanges();
+	            this.activateEvents.emit(this.activated.instance);
+	        };
+	        RouterOutlet.decorators = [
+	            { type: _angular_core.Directive, args: [{ selector: 'router-outlet' },] },
+	        ];
+	        /** @nocollapse */
+	        RouterOutlet.ctorParameters = [
+	            { type: RouterOutletMap, },
+	            { type: _angular_core.ViewContainerRef, },
+	            { type: _angular_core.ComponentFactoryResolver, },
+	            { type: undefined, decorators: [{ type: _angular_core.Attribute, args: ['name',] },] },
+	        ];
+	        RouterOutlet.propDecorators = {
+	            'activateEvents': [{ type: _angular_core.Output, args: ['activate',] },],
+	            'deactivateEvents': [{ type: _angular_core.Output, args: ['deactivate',] },],
+	        };
+	        return RouterOutlet;
+	    }());
+	
+	    /**
+	     * @whatItDoes Contains a list of directives
+	     * @stable
+	     */
+	    var ROUTER_DIRECTIVES = [RouterOutlet, RouterLink, RouterLinkWithHref, RouterLinkActive];
+	    /**
+	     * @whatItDoes Is used in DI to configure the router.
+	     * @stable
+	     */
+	    var ROUTER_CONFIGURATION = new _angular_core.OpaqueToken('ROUTER_CONFIGURATION');
+	    /**
+	     * @docsNotRequired
+	     */
+	    var ROUTER_FORROOT_GUARD = new _angular_core.OpaqueToken('ROUTER_FORROOT_GUARD');
+	    var ROUTER_PROVIDERS = [
+	        _angular_common.Location, { provide: UrlSerializer, useClass: DefaultUrlSerializer }, {
+	            provide: Router,
+	            useFactory: setupRouter,
+	            deps: [
+	                _angular_core.ApplicationRef, UrlSerializer, RouterOutletMap, _angular_common.Location, _angular_core.Injector, _angular_core.NgModuleFactoryLoader,
+	                _angular_core.Compiler, ROUTES, ROUTER_CONFIGURATION
+	            ]
+	        },
+	        RouterOutletMap, { provide: ActivatedRoute, useFactory: rootRoute, deps: [Router] },
+	        { provide: _angular_core.NgModuleFactoryLoader, useClass: _angular_core.SystemJsNgModuleLoader },
+	        { provide: ROUTER_CONFIGURATION, useValue: { enableTracing: false } }
+	    ];
+	    /**
+	     * @whatItDoes Adds router directives and providers.
+	     *
+	     * @howToUse
+	     *
+	     * RouterModule can be imported multiple times: once per lazily-loaded bundle.
+	     * Since the router deals with a global shared resource--location, we cannot have
+	     * more than one router service active.
+	     *
+	     * That is why there are two ways to create the module: `RouterModule.forRoot` and
+	     * `RouterModule.forChild`.
+	     *
+	     * * `forRoot` creates a module that contains all the directives, the given routes, and the router
+	     * service itself.
+	     * * `forChild` creates a module that contains all the directives and the given routes, but does not
+	     * include
+	     * the router service.
+	     *
+	     * When registered at the root, the module should be used as follows
+	     *
+	     * ```
+	     * @NgModule({
+	     *   imports: [RouterModule.forRoot(ROUTES)]
+	     * })
+	     * class MyNgModule {}
+	     * ```
+	     *
+	     * For submodules and lazy loaded submodules the module should be used as follows:
+	     *
+	     * ```
+	     * @NgModule({
+	     *   imports: [RouterModule.forChild(ROUTES)]
+	     * })
+	     * class MyNgModule {}
+	     * ```
+	     *
+	     * @description
+	     *
+	     * Managing state transitions is one of the hardest parts of building applications. This is
+	     * especially true on the web, where you also need to ensure that the state is reflected in the URL.
+	     * In addition, we often want to split applications into multiple bundles and load them on demand.
+	     * Doing this transparently is not trivial.
+	     *
+	     * The Angular 2 router solves these problems. Using the router, you can declaratively specify
+	     * application states, manage state transitions while taking care of the URL, and load bundles on
+	     * demand.
+	     *
+	     * [Read this developer guide](https://angular.io/docs/ts/latest/guide/router.html) to get an
+	     * overview of how the router should be used.
+	     *
+	     * @stable
+	     */
+	    var RouterModule = (function () {
+	        function RouterModule(guard) {
+	        }
+	        /**
+	         * Creates a module with all the router providers and directives. It also optionally sets up an
+	         * application listener to perform an initial navigation.
+	         *
+	         * Options:
+	         * * `enableTracing` makes the router log all its internal events to the console.
+	         * * `useHash` enables the location strategy that uses the URL fragment instead of the history
+	         * API.
+	         * * `initialNavigation` disables the initial navigation.
+	         * * `errorHandler` provides a custom error handler.
+	         */
+	        RouterModule.forRoot = function (routes, config) {
+	            return {
+	                ngModule: RouterModule,
+	                providers: [
+	                    ROUTER_PROVIDERS, provideRoutes(routes), {
+	                        provide: ROUTER_FORROOT_GUARD,
+	                        useFactory: provideForRootGuard,
+	                        deps: [[Router, new _angular_core.Optional(), new _angular_core.SkipSelf()]]
+	                    },
+	                    { provide: ROUTER_CONFIGURATION, useValue: config ? config : {} }, {
+	                        provide: _angular_common.LocationStrategy,
+	                        useFactory: provideLocationStrategy,
+	                        deps: [
+	                            _angular_common.PlatformLocation, [new _angular_core.Inject(_angular_common.APP_BASE_HREF), new _angular_core.Optional()], ROUTER_CONFIGURATION
+	                        ]
+	                    },
+	                    provideRouterInitializer()
+	                ]
+	            };
+	        };
+	        /**
+	         * Creates a module with all the router directives and a provider registering routes.
+	         */
+	        RouterModule.forChild = function (routes) {
+	            return { ngModule: RouterModule, providers: [provideRoutes(routes)] };
+	        };
+	        RouterModule.decorators = [
+	            { type: _angular_core.NgModule, args: [{ declarations: ROUTER_DIRECTIVES, exports: ROUTER_DIRECTIVES },] },
+	        ];
+	        /** @nocollapse */
+	        RouterModule.ctorParameters = [
+	            { type: undefined, decorators: [{ type: _angular_core.Optional }, { type: _angular_core.Inject, args: [ROUTER_FORROOT_GUARD,] },] },
+	        ];
+	        return RouterModule;
+	    }());
+	    function provideLocationStrategy(platformLocationStrategy, baseHref, options) {
+	        if (options === void 0) { options = {}; }
+	        return options.useHash ? new _angular_common.HashLocationStrategy(platformLocationStrategy, baseHref) :
+	            new _angular_common.PathLocationStrategy(platformLocationStrategy, baseHref);
+	    }
+	    function provideForRootGuard(router) {
+	        if (router) {
+	            throw new Error("RouterModule.forRoot() called twice. Lazy loaded modules should use RouterModule.forChild() instead.");
+	        }
+	        return 'guarded';
+	    }
+	    /**
+	     * @whatItDoes Registers routes.
+	     *
+	     * @howToUse
+	     *
+	     * ```
+	     * @NgModule({
+	     *   imports: [RouterModule.forChild(ROUTES)],
+	     *   providers: [provideRoutes(EXTRA_ROUTES)]
+	     * })
+	     * class MyNgModule {}
+	     * ```
+	     *
+	     * @stable
+	     */
+	    function provideRoutes(routes) {
+	        return [
+	            { provide: _angular_core.ANALYZE_FOR_ENTRY_COMPONENTS, multi: true, useValue: routes },
+	            { provide: ROUTES, multi: true, useValue: routes }
+	        ];
+	    }
+	    function setupRouter(ref, urlSerializer, outletMap, location, injector, loader, compiler, config, opts) {
+	        if (opts === void 0) { opts = {}; }
+	        if (ref.componentTypes.length == 0) {
+	            throw new Error('Bootstrap at least one component before injecting Router.');
+	        }
+	        var componentType = ref.componentTypes[0];
+	        var r = new Router(componentType, urlSerializer, outletMap, location, injector, loader, compiler, flatten(config));
+	        if (opts.errorHandler) {
+	            r.errorHandler = opts.errorHandler;
+	        }
+	        if (opts.enableTracing) {
+	            r.events.subscribe(function (e) {
+	                console.group("Router Event: " + e.constructor.name);
+	                console.log(e.toString());
+	                console.log(e);
+	                console.groupEnd();
+	            });
+	        }
+	        return r;
+	    }
+	    function rootRoute(router) {
+	        return router.routerState.root;
+	    }
+	    function initialRouterNavigation(router, opts) {
+	        return function () {
+	            if (opts.initialNavigation === false) {
+	                router.setUpLocationChangeListener();
+	            }
+	            else {
+	                router.initialNavigation();
+	            }
+	        };
+	    }
+	    function provideRouterInitializer() {
+	        return {
+	            provide: _angular_core.APP_BOOTSTRAP_LISTENER,
+	            multi: true,
+	            useFactory: initialRouterNavigation,
+	            deps: [Router, ROUTER_CONFIGURATION]
+	        };
+	    }
+	
+	    var __router_private__ = {
+	        ROUTER_PROVIDERS: ROUTER_PROVIDERS,
+	        ROUTES: ROUTES,
+	        flatten: flatten
+	    };
+	
+	    exports.RouterLink = RouterLink;
+	    exports.RouterLinkWithHref = RouterLinkWithHref;
+	    exports.RouterLinkActive = RouterLinkActive;
+	    exports.RouterOutlet = RouterOutlet;
+	    exports.NavigationCancel = NavigationCancel;
+	    exports.NavigationEnd = NavigationEnd;
+	    exports.NavigationError = NavigationError;
+	    exports.NavigationStart = NavigationStart;
+	    exports.Router = Router;
+	    exports.RoutesRecognized = RoutesRecognized;
+	    exports.RouterModule = RouterModule;
+	    exports.provideRoutes = provideRoutes;
+	    exports.RouterOutletMap = RouterOutletMap;
+	    exports.ActivatedRoute = ActivatedRoute;
+	    exports.ActivatedRouteSnapshot = ActivatedRouteSnapshot;
+	    exports.RouterState = RouterState;
+	    exports.RouterStateSnapshot = RouterStateSnapshot;
+	    exports.PRIMARY_OUTLET = PRIMARY_OUTLET;
+	    exports.DefaultUrlSerializer = DefaultUrlSerializer;
+	    exports.UrlSegment = UrlSegment;
+	    exports.UrlSerializer = UrlSerializer;
+	    exports.UrlTree = UrlTree;
+	    exports.__router_private__ = __router_private__;
+	
+	}));
+
+
+/***/ },
+/* 38 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var FromObservable_1 = __webpack_require__(39);
+	exports.from = FromObservable_1.FromObservable.create;
+
+
+/***/ },
+/* 39 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var isArray_1 = __webpack_require__(18);
+	var isPromise_1 = __webpack_require__(40);
+	var PromiseObservable_1 = __webpack_require__(41);
+	var IteratorObservable_1 = __webpack_require__(42);
+	var ArrayObservable_1 = __webpack_require__(44);
+	var ArrayLikeObservable_1 = __webpack_require__(48);
+	var iterator_1 = __webpack_require__(43);
+	var Observable_1 = __webpack_require__(12);
+	var observeOn_1 = __webpack_require__(49);
+	var observable_1 = __webpack_require__(25);
+	var isArrayLike = (function (x) { return x && typeof x.length === 'number'; });
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @extends {Ignored}
+	 * @hide true
+	 */
+	var FromObservable = (function (_super) {
+	    __extends(FromObservable, _super);
+	    function FromObservable(ish, scheduler) {
+	        _super.call(this, null);
+	        this.ish = ish;
+	        this.scheduler = scheduler;
+	    }
+	    /**
+	     * Creates an Observable from an Array, an array-like object, a Promise, an
+	     * iterable object, or an Observable-like object.
+	     *
+	     * <span class="informal">Converts almost anything to an Observable.</span>
+	     *
+	     * <img src="./img/from.png" width="100%">
+	     *
+	     * Convert various other objects and data types into Observables. `from`
+	     * converts a Promise or an array-like or an
+	     * [iterable](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols#iterable)
+	     * object into an Observable that emits the items in that promise or array or
+	     * iterable. A String, in this context, is treated as an array of characters.
+	     * Observable-like objects (contains a function named with the ES2015 Symbol
+	     * for Observable) can also be converted through this operator.
+	     *
+	     * @example <caption>Converts an array to an Observable</caption>
+	     * var array = [10, 20, 30];
+	     * var result = Rx.Observable.from(array);
+	     * result.subscribe(x => console.log(x));
+	     *
+	     * @example <caption>Convert an infinite iterable (from a generator) to an Observable</caption>
+	     * function* generateDoubles(seed) {
+	     *   var i = seed;
+	     *   while (true) {
+	     *     yield i;
+	     *     i = 2 * i; // double it
+	     *   }
+	     * }
+	     *
+	     * var iterator = generateDoubles(3);
+	     * var result = Rx.Observable.from(iterator).take(10);
+	     * result.subscribe(x => console.log(x));
+	     *
+	     * @see {@link create}
+	     * @see {@link fromEvent}
+	     * @see {@link fromEventPattern}
+	     * @see {@link fromPromise}
+	     *
+	     * @param {ObservableInput<T>} ish A subscribable object, a Promise, an
+	     * Observable-like, an Array, an iterable or an array-like object to be
+	     * converted.
+	     * @param {Scheduler} [scheduler] The scheduler on which to schedule the
+	     * emissions of values.
+	     * @return {Observable<T>} The Observable whose values are originally from the
+	     * input object that was converted.
+	     * @static true
+	     * @name from
+	     * @owner Observable
+	     */
+	    FromObservable.create = function (ish, scheduler) {
+	        if (ish != null) {
+	            if (typeof ish[observable_1.$$observable] === 'function') {
+	                if (ish instanceof Observable_1.Observable && !scheduler) {
+	                    return ish;
+	                }
+	                return new FromObservable(ish, scheduler);
+	            }
+	            else if (isArray_1.isArray(ish)) {
+	                return new ArrayObservable_1.ArrayObservable(ish, scheduler);
+	            }
+	            else if (isPromise_1.isPromise(ish)) {
+	                return new PromiseObservable_1.PromiseObservable(ish, scheduler);
+	            }
+	            else if (typeof ish[iterator_1.$$iterator] === 'function' || typeof ish === 'string') {
+	                return new IteratorObservable_1.IteratorObservable(ish, scheduler);
+	            }
+	            else if (isArrayLike(ish)) {
+	                return new ArrayLikeObservable_1.ArrayLikeObservable(ish, scheduler);
+	            }
+	        }
+	        throw new TypeError((ish !== null && typeof ish || ish) + ' is not observable');
+	    };
+	    FromObservable.prototype._subscribe = function (subscriber) {
+	        var ish = this.ish;
+	        var scheduler = this.scheduler;
+	        if (scheduler == null) {
+	            return ish[observable_1.$$observable]().subscribe(subscriber);
+	        }
+	        else {
+	            return ish[observable_1.$$observable]().subscribe(new observeOn_1.ObserveOnSubscriber(subscriber, scheduler, 0));
+	        }
+	    };
+	    return FromObservable;
+	}(Observable_1.Observable));
+	exports.FromObservable = FromObservable;
+
+
+/***/ },
+/* 40 */
+/***/ function(module, exports) {
+
+	"use strict";
+	function isPromise(value) {
+	    return value && typeof value.subscribe !== 'function' && typeof value.then === 'function';
+	}
+	exports.isPromise = isPromise;
+
+
+/***/ },
+/* 41 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var root_1 = __webpack_require__(13);
+	var Observable_1 = __webpack_require__(12);
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @extends {Ignored}
+	 * @hide true
+	 */
+	var PromiseObservable = (function (_super) {
+	    __extends(PromiseObservable, _super);
+	    function PromiseObservable(promise, scheduler) {
+	        _super.call(this);
+	        this.promise = promise;
+	        this.scheduler = scheduler;
+	    }
+	    /**
+	     * Converts a Promise to an Observable.
+	     *
+	     * <span class="informal">Returns an Observable that just emits the Promise's
+	     * resolved value, then completes.</span>
+	     *
+	     * Converts an ES2015 Promise or a Promises/A+ spec compliant Promise to an
+	     * Observable. If the Promise resolves with a value, the output Observable
+	     * emits that resolved value as a `next`, and then completes. If the Promise
+	     * is rejected, then the output Observable emits the corresponding Error.
+	     *
+	     * @example <caption>Convert the Promise returned by Fetch to an Observable</caption>
+	     * var result = Rx.Observable.fromPromise(fetch('http://myserver.com/'));
+	     * result.subscribe(x => console.log(x), e => console.error(e));
+	     *
+	     * @see {@link bindCallback}
+	     * @see {@link from}
+	     *
+	     * @param {Promise<T>} promise The promise to be converted.
+	     * @param {Scheduler} [scheduler] An optional Scheduler to use for scheduling
+	     * the delivery of the resolved value (or the rejection).
+	     * @return {Observable<T>} An Observable which wraps the Promise.
+	     * @static true
+	     * @name fromPromise
+	     * @owner Observable
+	     */
+	    PromiseObservable.create = function (promise, scheduler) {
+	        return new PromiseObservable(promise, scheduler);
+	    };
+	    PromiseObservable.prototype._subscribe = function (subscriber) {
+	        var _this = this;
+	        var promise = this.promise;
+	        var scheduler = this.scheduler;
+	        if (scheduler == null) {
+	            if (this._isScalar) {
+	                if (!subscriber.closed) {
+	                    subscriber.next(this.value);
+	                    subscriber.complete();
+	                }
+	            }
+	            else {
+	                promise.then(function (value) {
+	                    _this.value = value;
+	                    _this._isScalar = true;
+	                    if (!subscriber.closed) {
+	                        subscriber.next(value);
+	                        subscriber.complete();
+	                    }
+	                }, function (err) {
+	                    if (!subscriber.closed) {
+	                        subscriber.error(err);
+	                    }
+	                })
+	                    .then(null, function (err) {
+	                    // escape the promise trap, throw unhandled errors
+	                    root_1.root.setTimeout(function () { throw err; });
+	                });
+	            }
+	        }
+	        else {
+	            if (this._isScalar) {
+	                if (!subscriber.closed) {
+	                    return scheduler.schedule(dispatchNext, 0, { value: this.value, subscriber: subscriber });
+	                }
+	            }
+	            else {
+	                promise.then(function (value) {
+	                    _this.value = value;
+	                    _this._isScalar = true;
+	                    if (!subscriber.closed) {
+	                        subscriber.add(scheduler.schedule(dispatchNext, 0, { value: value, subscriber: subscriber }));
+	                    }
+	                }, function (err) {
+	                    if (!subscriber.closed) {
+	                        subscriber.add(scheduler.schedule(dispatchError, 0, { err: err, subscriber: subscriber }));
+	                    }
+	                })
+	                    .then(null, function (err) {
+	                    // escape the promise trap, throw unhandled errors
+	                    root_1.root.setTimeout(function () { throw err; });
+	                });
+	            }
+	        }
+	    };
+	    return PromiseObservable;
+	}(Observable_1.Observable));
+	exports.PromiseObservable = PromiseObservable;
+	function dispatchNext(arg) {
+	    var value = arg.value, subscriber = arg.subscriber;
+	    if (!subscriber.closed) {
+	        subscriber.next(value);
+	        subscriber.complete();
+	    }
+	}
+	function dispatchError(arg) {
+	    var err = arg.err, subscriber = arg.subscriber;
+	    if (!subscriber.closed) {
+	        subscriber.error(err);
+	    }
+	}
+
+
+/***/ },
+/* 42 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var root_1 = __webpack_require__(13);
+	var Observable_1 = __webpack_require__(12);
+	var iterator_1 = __webpack_require__(43);
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @extends {Ignored}
+	 * @hide true
+	 */
+	var IteratorObservable = (function (_super) {
+	    __extends(IteratorObservable, _super);
+	    function IteratorObservable(iterator, scheduler) {
+	        _super.call(this);
+	        this.scheduler = scheduler;
+	        if (iterator == null) {
+	            throw new Error('iterator cannot be null.');
+	        }
+	        this.iterator = getIterator(iterator);
+	    }
+	    IteratorObservable.create = function (iterator, scheduler) {
+	        return new IteratorObservable(iterator, scheduler);
+	    };
+	    IteratorObservable.dispatch = function (state) {
+	        var index = state.index, hasError = state.hasError, iterator = state.iterator, subscriber = state.subscriber;
+	        if (hasError) {
+	            subscriber.error(state.error);
+	            return;
+	        }
+	        var result = iterator.next();
+	        if (result.done) {
+	            subscriber.complete();
+	            return;
+	        }
+	        subscriber.next(result.value);
+	        state.index = index + 1;
+	        if (subscriber.closed) {
+	            return;
+	        }
+	        this.schedule(state);
+	    };
+	    IteratorObservable.prototype._subscribe = function (subscriber) {
+	        var index = 0;
+	        var _a = this, iterator = _a.iterator, scheduler = _a.scheduler;
+	        if (scheduler) {
+	            return scheduler.schedule(IteratorObservable.dispatch, 0, {
+	                index: index, iterator: iterator, subscriber: subscriber
+	            });
+	        }
+	        else {
+	            do {
+	                var result = iterator.next();
+	                if (result.done) {
+	                    subscriber.complete();
+	                    break;
+	                }
+	                else {
+	                    subscriber.next(result.value);
+	                }
+	                if (subscriber.closed) {
+	                    break;
+	                }
+	            } while (true);
+	        }
+	    };
+	    return IteratorObservable;
+	}(Observable_1.Observable));
+	exports.IteratorObservable = IteratorObservable;
+	var StringIterator = (function () {
+	    function StringIterator(str, idx, len) {
+	        if (idx === void 0) { idx = 0; }
+	        if (len === void 0) { len = str.length; }
+	        this.str = str;
+	        this.idx = idx;
+	        this.len = len;
+	    }
+	    StringIterator.prototype[iterator_1.$$iterator] = function () { return (this); };
+	    StringIterator.prototype.next = function () {
+	        return this.idx < this.len ? {
+	            done: false,
+	            value: this.str.charAt(this.idx++)
+	        } : {
+	            done: true,
+	            value: undefined
+	        };
+	    };
+	    return StringIterator;
+	}());
+	var ArrayIterator = (function () {
+	    function ArrayIterator(arr, idx, len) {
+	        if (idx === void 0) { idx = 0; }
+	        if (len === void 0) { len = toLength(arr); }
+	        this.arr = arr;
+	        this.idx = idx;
+	        this.len = len;
+	    }
+	    ArrayIterator.prototype[iterator_1.$$iterator] = function () { return this; };
+	    ArrayIterator.prototype.next = function () {
+	        return this.idx < this.len ? {
+	            done: false,
+	            value: this.arr[this.idx++]
+	        } : {
+	            done: true,
+	            value: undefined
+	        };
+	    };
+	    return ArrayIterator;
+	}());
+	function getIterator(obj) {
+	    var i = obj[iterator_1.$$iterator];
+	    if (!i && typeof obj === 'string') {
+	        return new StringIterator(obj);
+	    }
+	    if (!i && obj.length !== undefined) {
+	        return new ArrayIterator(obj);
+	    }
+	    if (!i) {
+	        throw new TypeError('object is not iterable');
+	    }
+	    return obj[iterator_1.$$iterator]();
+	}
+	var maxSafeInteger = Math.pow(2, 53) - 1;
+	function toLength(o) {
+	    var len = +o.length;
+	    if (isNaN(len)) {
+	        return 0;
+	    }
+	    if (len === 0 || !numberIsFinite(len)) {
+	        return len;
+	    }
+	    len = sign(len) * Math.floor(Math.abs(len));
+	    if (len <= 0) {
+	        return 0;
+	    }
+	    if (len > maxSafeInteger) {
+	        return maxSafeInteger;
+	    }
+	    return len;
+	}
+	function numberIsFinite(value) {
+	    return typeof value === 'number' && root_1.root.isFinite(value);
+	}
+	function sign(value) {
+	    var valueAsNumber = +value;
+	    if (valueAsNumber === 0) {
+	        return valueAsNumber;
+	    }
+	    if (isNaN(valueAsNumber)) {
+	        return valueAsNumber;
+	    }
+	    return valueAsNumber < 0 ? -1 : 1;
+	}
+
+
+/***/ },
+/* 43 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var root_1 = __webpack_require__(13);
+	var Symbol = root_1.root.Symbol;
+	if (typeof Symbol === 'function') {
+	    if (Symbol.iterator) {
+	        exports.$$iterator = Symbol.iterator;
+	    }
+	    else if (typeof Symbol.for === 'function') {
+	        exports.$$iterator = Symbol.for('iterator');
+	    }
+	}
+	else {
+	    if (root_1.root.Set && typeof new root_1.root.Set()['@@iterator'] === 'function') {
+	        // Bug for mozilla version
+	        exports.$$iterator = '@@iterator';
+	    }
+	    else if (root_1.root.Map) {
+	        // es6-shim specific logic
+	        var keys = Object.getOwnPropertyNames(root_1.root.Map.prototype);
+	        for (var i = 0; i < keys.length; ++i) {
+	            var key = keys[i];
+	            if (key !== 'entries' && key !== 'size' && root_1.root.Map.prototype[key] === root_1.root.Map.prototype['entries']) {
+	                exports.$$iterator = key;
+	                break;
+	            }
+	        }
+	    }
+	    else {
+	        exports.$$iterator = '@@iterator';
+	    }
+	}
+
+
+/***/ },
+/* 44 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var Observable_1 = __webpack_require__(12);
+	var ScalarObservable_1 = __webpack_require__(45);
+	var EmptyObservable_1 = __webpack_require__(46);
+	var isScheduler_1 = __webpack_require__(47);
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @extends {Ignored}
+	 * @hide true
+	 */
+	var ArrayObservable = (function (_super) {
+	    __extends(ArrayObservable, _super);
+	    function ArrayObservable(array, scheduler) {
+	        _super.call(this);
+	        this.array = array;
+	        this.scheduler = scheduler;
+	        if (!scheduler && array.length === 1) {
+	            this._isScalar = true;
+	            this.value = array[0];
+	        }
+	    }
+	    ArrayObservable.create = function (array, scheduler) {
+	        return new ArrayObservable(array, scheduler);
+	    };
+	    /**
+	     * Creates an Observable that emits some values you specify as arguments,
+	     * immediately one after the other, and then emits a complete notification.
+	     *
+	     * <span class="informal">Emits the arguments you provide, then completes.
+	     * </span>
+	     *
+	     * <img src="./img/of.png" width="100%">
+	     *
+	     * This static operator is useful for creating a simple Observable that only
+	     * emits the arguments given, and the complete notification thereafter. It can
+	     * be used for composing with other Observables, such as with {@link concat}.
+	     * By default, it uses a `null` Scheduler, which means the `next`
+	     * notifications are sent synchronously, although with a different Scheduler
+	     * it is possible to determine when those notifications will be delivered.
+	     *
+	     * @example <caption>Emit 10, 20, 30, then 'a', 'b', 'c', then start ticking every second.</caption>
+	     * var numbers = Rx.Observable.of(10, 20, 30);
+	     * var letters = Rx.Observable.of('a', 'b', 'c');
+	     * var interval = Rx.Observable.interval(1000);
+	     * var result = numbers.concat(letters).concat(interval);
+	     * result.subscribe(x => console.log(x));
+	     *
+	     * @see {@link create}
+	     * @see {@link empty}
+	     * @see {@link never}
+	     * @see {@link throw}
+	     *
+	     * @param {...T} values Arguments that represent `next` values to be emitted.
+	     * @param {Scheduler} [scheduler] A {@link Scheduler} to use for scheduling
+	     * the emissions of the `next` notifications.
+	     * @return {Observable<T>} An Observable that emits each given input value.
+	     * @static true
+	     * @name of
+	     * @owner Observable
+	     */
+	    ArrayObservable.of = function () {
+	        var array = [];
+	        for (var _i = 0; _i < arguments.length; _i++) {
+	            array[_i - 0] = arguments[_i];
+	        }
+	        var scheduler = array[array.length - 1];
+	        if (isScheduler_1.isScheduler(scheduler)) {
+	            array.pop();
+	        }
+	        else {
+	            scheduler = null;
+	        }
+	        var len = array.length;
+	        if (len > 1) {
+	            return new ArrayObservable(array, scheduler);
+	        }
+	        else if (len === 1) {
+	            return new ScalarObservable_1.ScalarObservable(array[0], scheduler);
+	        }
+	        else {
+	            return new EmptyObservable_1.EmptyObservable(scheduler);
+	        }
+	    };
+	    ArrayObservable.dispatch = function (state) {
+	        var array = state.array, index = state.index, count = state.count, subscriber = state.subscriber;
+	        if (index >= count) {
+	            subscriber.complete();
+	            return;
+	        }
+	        subscriber.next(array[index]);
+	        if (subscriber.closed) {
+	            return;
+	        }
+	        state.index = index + 1;
+	        this.schedule(state);
+	    };
+	    ArrayObservable.prototype._subscribe = function (subscriber) {
+	        var index = 0;
+	        var array = this.array;
+	        var count = array.length;
+	        var scheduler = this.scheduler;
+	        if (scheduler) {
+	            return scheduler.schedule(ArrayObservable.dispatch, 0, {
+	                array: array, index: index, count: count, subscriber: subscriber
+	            });
+	        }
+	        else {
+	            for (var i = 0; i < count && !subscriber.closed; i++) {
+	                subscriber.next(array[i]);
+	            }
+	            subscriber.complete();
+	        }
+	    };
+	    return ArrayObservable;
+	}(Observable_1.Observable));
+	exports.ArrayObservable = ArrayObservable;
+
+
+/***/ },
+/* 45 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var Observable_1 = __webpack_require__(12);
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @extends {Ignored}
+	 * @hide true
+	 */
+	var ScalarObservable = (function (_super) {
+	    __extends(ScalarObservable, _super);
+	    function ScalarObservable(value, scheduler) {
+	        _super.call(this);
+	        this.value = value;
+	        this.scheduler = scheduler;
+	        this._isScalar = true;
+	        if (scheduler) {
+	            this._isScalar = false;
+	        }
+	    }
+	    ScalarObservable.create = function (value, scheduler) {
+	        return new ScalarObservable(value, scheduler);
+	    };
+	    ScalarObservable.dispatch = function (state) {
+	        var done = state.done, value = state.value, subscriber = state.subscriber;
+	        if (done) {
+	            subscriber.complete();
+	            return;
+	        }
+	        subscriber.next(value);
+	        if (subscriber.closed) {
+	            return;
+	        }
+	        state.done = true;
+	        this.schedule(state);
+	    };
+	    ScalarObservable.prototype._subscribe = function (subscriber) {
+	        var value = this.value;
+	        var scheduler = this.scheduler;
+	        if (scheduler) {
+	            return scheduler.schedule(ScalarObservable.dispatch, 0, {
+	                done: false, value: value, subscriber: subscriber
+	            });
+	        }
+	        else {
+	            subscriber.next(value);
+	            if (!subscriber.closed) {
+	                subscriber.complete();
+	            }
+	        }
+	    };
+	    return ScalarObservable;
+	}(Observable_1.Observable));
+	exports.ScalarObservable = ScalarObservable;
+
+
+/***/ },
+/* 46 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var Observable_1 = __webpack_require__(12);
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @extends {Ignored}
+	 * @hide true
+	 */
+	var EmptyObservable = (function (_super) {
+	    __extends(EmptyObservable, _super);
+	    function EmptyObservable(scheduler) {
+	        _super.call(this);
+	        this.scheduler = scheduler;
+	    }
+	    /**
+	     * Creates an Observable that emits no items to the Observer and immediately
+	     * emits a complete notification.
+	     *
+	     * <span class="informal">Just emits 'complete', and nothing else.
+	     * </span>
+	     *
+	     * <img src="./img/empty.png" width="100%">
+	     *
+	     * This static operator is useful for creating a simple Observable that only
+	     * emits the complete notification. It can be used for composing with other
+	     * Observables, such as in a {@link mergeMap}.
+	     *
+	     * @example <caption>Emit the number 7, then complete.</caption>
+	     * var result = Rx.Observable.empty().startWith(7);
+	     * result.subscribe(x => console.log(x));
+	     *
+	     * @example <caption>Map and flatten only odd numbers to the sequence 'a', 'b', 'c'</caption>
+	     * var interval = Rx.Observable.interval(1000);
+	     * var result = interval.mergeMap(x =>
+	     *   x % 2 === 1 ? Rx.Observable.of('a', 'b', 'c') : Rx.Observable.empty()
+	     * );
+	     * result.subscribe(x => console.log(x));
+	     *
+	     * @see {@link create}
+	     * @see {@link never}
+	     * @see {@link of}
+	     * @see {@link throw}
+	     *
+	     * @param {Scheduler} [scheduler] A {@link Scheduler} to use for scheduling
+	     * the emission of the complete notification.
+	     * @return {Observable} An "empty" Observable: emits only the complete
+	     * notification.
+	     * @static true
+	     * @name empty
+	     * @owner Observable
+	     */
+	    EmptyObservable.create = function (scheduler) {
+	        return new EmptyObservable(scheduler);
+	    };
+	    EmptyObservable.dispatch = function (arg) {
+	        var subscriber = arg.subscriber;
+	        subscriber.complete();
+	    };
+	    EmptyObservable.prototype._subscribe = function (subscriber) {
+	        var scheduler = this.scheduler;
+	        if (scheduler) {
+	            return scheduler.schedule(EmptyObservable.dispatch, 0, { subscriber: subscriber });
+	        }
+	        else {
+	            subscriber.complete();
+	        }
+	    };
+	    return EmptyObservable;
+	}(Observable_1.Observable));
+	exports.EmptyObservable = EmptyObservable;
+
+
+/***/ },
+/* 47 */
+/***/ function(module, exports) {
+
+	"use strict";
+	function isScheduler(value) {
+	    return value && typeof value.schedule === 'function';
+	}
+	exports.isScheduler = isScheduler;
+
+
+/***/ },
+/* 48 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var Observable_1 = __webpack_require__(12);
+	var ScalarObservable_1 = __webpack_require__(45);
+	var EmptyObservable_1 = __webpack_require__(46);
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @extends {Ignored}
+	 * @hide true
+	 */
+	var ArrayLikeObservable = (function (_super) {
+	    __extends(ArrayLikeObservable, _super);
+	    function ArrayLikeObservable(arrayLike, scheduler) {
+	        _super.call(this);
+	        this.arrayLike = arrayLike;
+	        this.scheduler = scheduler;
+	        if (!scheduler && arrayLike.length === 1) {
+	            this._isScalar = true;
+	            this.value = arrayLike[0];
+	        }
+	    }
+	    ArrayLikeObservable.create = function (arrayLike, scheduler) {
+	        var length = arrayLike.length;
+	        if (length === 0) {
+	            return new EmptyObservable_1.EmptyObservable();
+	        }
+	        else if (length === 1) {
+	            return new ScalarObservable_1.ScalarObservable(arrayLike[0], scheduler);
+	        }
+	        else {
+	            return new ArrayLikeObservable(arrayLike, scheduler);
+	        }
+	    };
+	    ArrayLikeObservable.dispatch = function (state) {
+	        var arrayLike = state.arrayLike, index = state.index, length = state.length, subscriber = state.subscriber;
+	        if (subscriber.closed) {
+	            return;
+	        }
+	        if (index >= length) {
+	            subscriber.complete();
+	            return;
+	        }
+	        subscriber.next(arrayLike[index]);
+	        state.index = index + 1;
+	        this.schedule(state);
+	    };
+	    ArrayLikeObservable.prototype._subscribe = function (subscriber) {
+	        var index = 0;
+	        var _a = this, arrayLike = _a.arrayLike, scheduler = _a.scheduler;
+	        var length = arrayLike.length;
+	        if (scheduler) {
+	            return scheduler.schedule(ArrayLikeObservable.dispatch, 0, {
+	                arrayLike: arrayLike, index: index, length: length, subscriber: subscriber
+	            });
+	        }
+	        else {
+	            for (var i = 0; i < length && !subscriber.closed; i++) {
+	                subscriber.next(arrayLike[i]);
+	            }
+	            subscriber.complete();
+	        }
+	    };
+	    return ArrayLikeObservable;
+	}(Observable_1.Observable));
+	exports.ArrayLikeObservable = ArrayLikeObservable;
+
+
+/***/ },
+/* 49 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var Subscriber_1 = __webpack_require__(15);
+	var Notification_1 = __webpack_require__(50);
+	/**
+	 * @see {@link Notification}
+	 *
+	 * @param scheduler
+	 * @param delay
+	 * @return {Observable<R>|WebSocketSubject<T>|Observable<T>}
+	 * @method observeOn
+	 * @owner Observable
+	 */
+	function observeOn(scheduler, delay) {
+	    if (delay === void 0) { delay = 0; }
+	    return this.lift(new ObserveOnOperator(scheduler, delay));
+	}
+	exports.observeOn = observeOn;
+	var ObserveOnOperator = (function () {
+	    function ObserveOnOperator(scheduler, delay) {
+	        if (delay === void 0) { delay = 0; }
+	        this.scheduler = scheduler;
+	        this.delay = delay;
+	    }
+	    ObserveOnOperator.prototype.call = function (subscriber, source) {
+	        return source._subscribe(new ObserveOnSubscriber(subscriber, this.scheduler, this.delay));
+	    };
+	    return ObserveOnOperator;
+	}());
+	exports.ObserveOnOperator = ObserveOnOperator;
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @ignore
+	 * @extends {Ignored}
+	 */
+	var ObserveOnSubscriber = (function (_super) {
+	    __extends(ObserveOnSubscriber, _super);
+	    function ObserveOnSubscriber(destination, scheduler, delay) {
+	        if (delay === void 0) { delay = 0; }
+	        _super.call(this, destination);
+	        this.scheduler = scheduler;
+	        this.delay = delay;
+	    }
+	    ObserveOnSubscriber.dispatch = function (arg) {
+	        var notification = arg.notification, destination = arg.destination;
+	        notification.observe(destination);
+	    };
+	    ObserveOnSubscriber.prototype.scheduleMessage = function (notification) {
+	        this.add(this.scheduler.schedule(ObserveOnSubscriber.dispatch, this.delay, new ObserveOnMessage(notification, this.destination)));
+	    };
+	    ObserveOnSubscriber.prototype._next = function (value) {
+	        this.scheduleMessage(Notification_1.Notification.createNext(value));
+	    };
+	    ObserveOnSubscriber.prototype._error = function (err) {
+	        this.scheduleMessage(Notification_1.Notification.createError(err));
+	    };
+	    ObserveOnSubscriber.prototype._complete = function () {
+	        this.scheduleMessage(Notification_1.Notification.createComplete());
+	    };
+	    return ObserveOnSubscriber;
+	}(Subscriber_1.Subscriber));
+	exports.ObserveOnSubscriber = ObserveOnSubscriber;
+	var ObserveOnMessage = (function () {
+	    function ObserveOnMessage(notification, destination) {
+	        this.notification = notification;
+	        this.destination = destination;
+	    }
+	    return ObserveOnMessage;
+	}());
+	exports.ObserveOnMessage = ObserveOnMessage;
+
+
+/***/ },
+/* 50 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var Observable_1 = __webpack_require__(12);
+	/**
+	 * Represents a push-based event or value that an {@link Observable} can emit.
+	 * This class is particularly useful for operators that manage notifications,
+	 * like {@link materialize}, {@link dematerialize}, {@link observeOn}, and
+	 * others. Besides wrapping the actual delivered value, it also annotates it
+	 * with metadata of, for instance, what type of push message it is (`next`,
+	 * `error`, or `complete`).
+	 *
+	 * @see {@link materialize}
+	 * @see {@link dematerialize}
+	 * @see {@link observeOn}
+	 *
+	 * @class Notification<T>
+	 */
+	var Notification = (function () {
+	    function Notification(kind, value, exception) {
+	        this.kind = kind;
+	        this.value = value;
+	        this.exception = exception;
+	        this.hasValue = kind === 'N';
+	    }
+	    /**
+	     * Delivers to the given `observer` the value wrapped by this Notification.
+	     * @param {Observer} observer
+	     * @return
+	     */
+	    Notification.prototype.observe = function (observer) {
+	        switch (this.kind) {
+	            case 'N':
+	                return observer.next && observer.next(this.value);
+	            case 'E':
+	                return observer.error && observer.error(this.exception);
+	            case 'C':
+	                return observer.complete && observer.complete();
+	        }
+	    };
+	    /**
+	     * Given some {@link Observer} callbacks, deliver the value represented by the
+	     * current Notification to the correctly corresponding callback.
+	     * @param {function(value: T): void} next An Observer `next` callback.
+	     * @param {function(err: any): void} [error] An Observer `error` callback.
+	     * @param {function(): void} [complete] An Observer `complete` callback.
+	     * @return {any}
+	     */
+	    Notification.prototype.do = function (next, error, complete) {
+	        var kind = this.kind;
+	        switch (kind) {
+	            case 'N':
+	                return next && next(this.value);
+	            case 'E':
+	                return error && error(this.exception);
+	            case 'C':
+	                return complete && complete();
+	        }
+	    };
+	    /**
+	     * Takes an Observer or its individual callback functions, and calls `observe`
+	     * or `do` methods accordingly.
+	     * @param {Observer|function(value: T): void} nextOrObserver An Observer or
+	     * the `next` callback.
+	     * @param {function(err: any): void} [error] An Observer `error` callback.
+	     * @param {function(): void} [complete] An Observer `complete` callback.
+	     * @return {any}
+	     */
+	    Notification.prototype.accept = function (nextOrObserver, error, complete) {
+	        if (nextOrObserver && typeof nextOrObserver.next === 'function') {
+	            return this.observe(nextOrObserver);
+	        }
+	        else {
+	            return this.do(nextOrObserver, error, complete);
+	        }
+	    };
+	    /**
+	     * Returns a simple Observable that just delivers the notification represented
+	     * by this Notification instance.
+	     * @return {any}
+	     */
+	    Notification.prototype.toObservable = function () {
+	        var kind = this.kind;
+	        switch (kind) {
+	            case 'N':
+	                return Observable_1.Observable.of(this.value);
+	            case 'E':
+	                return Observable_1.Observable.throw(this.exception);
+	            case 'C':
+	                return Observable_1.Observable.empty();
+	        }
+	        throw new Error('unexpected notification kind value');
+	    };
+	    /**
+	     * A shortcut to create a Notification instance of the type `next` from a
+	     * given value.
+	     * @param {T} value The `next` value.
+	     * @return {Notification<T>} The "next" Notification representing the
+	     * argument.
+	     */
+	    Notification.createNext = function (value) {
+	        if (typeof value !== 'undefined') {
+	            return new Notification('N', value);
+	        }
+	        return this.undefinedValueNotification;
+	    };
+	    /**
+	     * A shortcut to create a Notification instance of the type `error` from a
+	     * given error.
+	     * @param {any} [err] The `error` exception.
+	     * @return {Notification<T>} The "error" Notification representing the
+	     * argument.
+	     */
+	    Notification.createError = function (err) {
+	        return new Notification('E', undefined, err);
+	    };
+	    /**
+	     * A shortcut to create a Notification instance of the type `complete`.
+	     * @return {Notification<any>} The valueless "complete" Notification.
+	     */
+	    Notification.createComplete = function () {
+	        return this.completeNotification;
+	    };
+	    Notification.completeNotification = new Notification('C');
+	    Notification.undefinedValueNotification = new Notification('N', undefined);
+	    return Notification;
+	}());
+	exports.Notification = Notification;
+
+
+/***/ },
+/* 51 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var ArrayObservable_1 = __webpack_require__(44);
+	exports.of = ArrayObservable_1.ArrayObservable.of;
+
+
+/***/ },
+/* 52 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var Subscriber_1 = __webpack_require__(15);
+	/**
+	 * Returns an Observable that emits whether or not every item of the source satisfies the condition specified.
+	 * @param {function} predicate a function for determining if an item meets a specified condition.
+	 * @param {any} [thisArg] optional object to use for `this` in the callback
+	 * @return {Observable} an Observable of booleans that determines if all items of the source Observable meet the condition specified.
+	 * @method every
+	 * @owner Observable
+	 */
+	function every(predicate, thisArg) {
+	    return this.lift(new EveryOperator(predicate, thisArg, this));
+	}
+	exports.every = every;
+	var EveryOperator = (function () {
+	    function EveryOperator(predicate, thisArg, source) {
+	        this.predicate = predicate;
+	        this.thisArg = thisArg;
+	        this.source = source;
+	    }
+	    EveryOperator.prototype.call = function (observer, source) {
+	        return source._subscribe(new EverySubscriber(observer, this.predicate, this.thisArg, this.source));
+	    };
+	    return EveryOperator;
+	}());
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @ignore
+	 * @extends {Ignored}
+	 */
+	var EverySubscriber = (function (_super) {
+	    __extends(EverySubscriber, _super);
+	    function EverySubscriber(destination, predicate, thisArg, source) {
+	        _super.call(this, destination);
+	        this.predicate = predicate;
+	        this.thisArg = thisArg;
+	        this.source = source;
+	        this.index = 0;
+	        this.thisArg = thisArg || this;
+	    }
+	    EverySubscriber.prototype.notifyComplete = function (everyValueMatch) {
+	        this.destination.next(everyValueMatch);
+	        this.destination.complete();
+	    };
+	    EverySubscriber.prototype._next = function (value) {
+	        var result = false;
+	        try {
+	            result = this.predicate.call(this.thisArg, value, this.index++, this.source);
+	        }
+	        catch (err) {
+	            this.destination.error(err);
+	            return;
+	        }
+	        if (!result) {
+	            this.notifyComplete(false);
+	        }
+	    };
+	    EverySubscriber.prototype._complete = function () {
+	        this.notifyComplete(true);
+	    };
+	    return EverySubscriber;
+	}(Subscriber_1.Subscriber));
+
+
+/***/ },
+/* 53 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var Subscriber_1 = __webpack_require__(15);
+	/**
+	 * Applies a given `project` function to each value emitted by the source
+	 * Observable, and emits the resulting values as an Observable.
+	 *
+	 * <span class="informal">Like [Array.prototype.map()](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map),
+	 * it passes each source value through a transformation function to get
+	 * corresponding output values.</span>
+	 *
+	 * <img src="./img/map.png" width="100%">
+	 *
+	 * Similar to the well known `Array.prototype.map` function, this operator
+	 * applies a projection to each value and emits that projection in the output
+	 * Observable.
+	 *
+	 * @example <caption>Map every every click to the clientX position of that click</caption>
+	 * var clicks = Rx.Observable.fromEvent(document, 'click');
+	 * var positions = clicks.map(ev => ev.clientX);
+	 * positions.subscribe(x => console.log(x));
+	 *
+	 * @see {@link mapTo}
+	 * @see {@link pluck}
+	 *
+	 * @param {function(value: T, index: number): R} project The function to apply
+	 * to each `value` emitted by the source Observable. The `index` parameter is
+	 * the number `i` for the i-th emission that has happened since the
+	 * subscription, starting from the number `0`.
+	 * @param {any} [thisArg] An optional argument to define what `this` is in the
+	 * `project` function.
+	 * @return {Observable<R>} An Observable that emits the values from the source
+	 * Observable transformed by the given `project` function.
+	 * @method map
+	 * @owner Observable
+	 */
+	function map(project, thisArg) {
+	    if (typeof project !== 'function') {
+	        throw new TypeError('argument is not a function. Are you looking for `mapTo()`?');
+	    }
+	    return this.lift(new MapOperator(project, thisArg));
+	}
+	exports.map = map;
+	var MapOperator = (function () {
+	    function MapOperator(project, thisArg) {
+	        this.project = project;
+	        this.thisArg = thisArg;
+	    }
+	    MapOperator.prototype.call = function (subscriber, source) {
+	        return source._subscribe(new MapSubscriber(subscriber, this.project, this.thisArg));
+	    };
+	    return MapOperator;
+	}());
+	exports.MapOperator = MapOperator;
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @ignore
+	 * @extends {Ignored}
+	 */
+	var MapSubscriber = (function (_super) {
+	    __extends(MapSubscriber, _super);
+	    function MapSubscriber(destination, project, thisArg) {
+	        _super.call(this, destination);
+	        this.project = project;
+	        this.count = 0;
+	        this.thisArg = thisArg || this;
+	    }
+	    // NOTE: This looks unoptimized, but it's actually purposefully NOT
+	    // using try/catch optimizations.
+	    MapSubscriber.prototype._next = function (value) {
+	        var result;
+	        try {
+	            result = this.project.call(this.thisArg, value, this.count++);
+	        }
+	        catch (err) {
+	            this.destination.error(err);
+	            return;
+	        }
+	        this.destination.next(result);
+	    };
+	    return MapSubscriber;
+	}(Subscriber_1.Subscriber));
+
+
+/***/ },
+/* 54 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var OuterSubscriber_1 = __webpack_require__(55);
+	var subscribeToResult_1 = __webpack_require__(56);
+	/**
+	 * Converts a higher-order Observable into a first-order Observable which
+	 * concurrently delivers all values that are emitted on the inner Observables.
+	 *
+	 * <span class="informal">Flattens an Observable-of-Observables.</span>
+	 *
+	 * <img src="./img/mergeAll.png" width="100%">
+	 *
+	 * `mergeAll` subscribes to an Observable that emits Observables, also known as
+	 * a higher-order Observable. Each time it observes one of these emitted inner
+	 * Observables, it subscribes to that and delivers all the values from the
+	 * inner Observable on the output Observable. The output Observable only
+	 * completes once all inner Observables have completed. Any error delivered by
+	 * a inner Observable will be immediately emitted on the output Observable.
+	 *
+	 * @example <caption>Spawn a new interval Observable for each click event, and blend their outputs as one Observable</caption>
+	 * var clicks = Rx.Observable.fromEvent(document, 'click');
+	 * var higherOrder = clicks.map((ev) => Rx.Observable.interval(1000));
+	 * var firstOrder = higherOrder.mergeAll();
+	 * firstOrder.subscribe(x => console.log(x));
+	 *
+	 * @example <caption>Count from 0 to 9 every second for each click, but only allow 2 concurrent timers</caption>
+	 * var clicks = Rx.Observable.fromEvent(document, 'click');
+	 * var higherOrder = clicks.map((ev) => Rx.Observable.interval(1000).take(10));
+	 * var firstOrder = higherOrder.mergeAll(2);
+	 * firstOrder.subscribe(x => console.log(x));
+	 *
+	 * @see {@link combineAll}
+	 * @see {@link concatAll}
+	 * @see {@link exhaust}
+	 * @see {@link merge}
+	 * @see {@link mergeMap}
+	 * @see {@link mergeMapTo}
+	 * @see {@link mergeScan}
+	 * @see {@link switch}
+	 * @see {@link zipAll}
+	 *
+	 * @param {number} [concurrent=Number.POSITIVE_INFINITY] Maximum number of inner
+	 * Observables being subscribed to concurrently.
+	 * @return {Observable} An Observable that emits values coming from all the
+	 * inner Observables emitted by the source Observable.
+	 * @method mergeAll
+	 * @owner Observable
+	 */
+	function mergeAll(concurrent) {
+	    if (concurrent === void 0) { concurrent = Number.POSITIVE_INFINITY; }
+	    return this.lift(new MergeAllOperator(concurrent));
+	}
+	exports.mergeAll = mergeAll;
+	var MergeAllOperator = (function () {
+	    function MergeAllOperator(concurrent) {
+	        this.concurrent = concurrent;
+	    }
+	    MergeAllOperator.prototype.call = function (observer, source) {
+	        return source._subscribe(new MergeAllSubscriber(observer, this.concurrent));
+	    };
+	    return MergeAllOperator;
+	}());
+	exports.MergeAllOperator = MergeAllOperator;
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @ignore
+	 * @extends {Ignored}
+	 */
+	var MergeAllSubscriber = (function (_super) {
+	    __extends(MergeAllSubscriber, _super);
+	    function MergeAllSubscriber(destination, concurrent) {
+	        _super.call(this, destination);
+	        this.concurrent = concurrent;
+	        this.hasCompleted = false;
+	        this.buffer = [];
+	        this.active = 0;
+	    }
+	    MergeAllSubscriber.prototype._next = function (observable) {
+	        if (this.active < this.concurrent) {
+	            this.active++;
+	            this.add(subscribeToResult_1.subscribeToResult(this, observable));
+	        }
+	        else {
+	            this.buffer.push(observable);
+	        }
+	    };
+	    MergeAllSubscriber.prototype._complete = function () {
+	        this.hasCompleted = true;
+	        if (this.active === 0 && this.buffer.length === 0) {
+	            this.destination.complete();
+	        }
+	    };
+	    MergeAllSubscriber.prototype.notifyComplete = function (innerSub) {
+	        var buffer = this.buffer;
+	        this.remove(innerSub);
+	        this.active--;
+	        if (buffer.length > 0) {
+	            this._next(buffer.shift());
+	        }
+	        else if (this.active === 0 && this.hasCompleted) {
+	            this.destination.complete();
+	        }
+	    };
+	    return MergeAllSubscriber;
+	}(OuterSubscriber_1.OuterSubscriber));
+	exports.MergeAllSubscriber = MergeAllSubscriber;
+
+
+/***/ },
+/* 55 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var Subscriber_1 = __webpack_require__(15);
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @ignore
+	 * @extends {Ignored}
+	 */
+	var OuterSubscriber = (function (_super) {
+	    __extends(OuterSubscriber, _super);
+	    function OuterSubscriber() {
+	        _super.apply(this, arguments);
+	    }
+	    OuterSubscriber.prototype.notifyNext = function (outerValue, innerValue, outerIndex, innerIndex, innerSub) {
+	        this.destination.next(innerValue);
+	    };
+	    OuterSubscriber.prototype.notifyError = function (error, innerSub) {
+	        this.destination.error(error);
+	    };
+	    OuterSubscriber.prototype.notifyComplete = function (innerSub) {
+	        this.destination.complete();
+	    };
+	    return OuterSubscriber;
+	}(Subscriber_1.Subscriber));
+	exports.OuterSubscriber = OuterSubscriber;
+
+
+/***/ },
+/* 56 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var root_1 = __webpack_require__(13);
+	var isArray_1 = __webpack_require__(18);
+	var isPromise_1 = __webpack_require__(40);
+	var Observable_1 = __webpack_require__(12);
+	var iterator_1 = __webpack_require__(43);
+	var InnerSubscriber_1 = __webpack_require__(57);
+	var observable_1 = __webpack_require__(25);
+	function subscribeToResult(outerSubscriber, result, outerValue, outerIndex) {
+	    var destination = new InnerSubscriber_1.InnerSubscriber(outerSubscriber, outerValue, outerIndex);
+	    if (destination.closed) {
+	        return null;
+	    }
+	    if (result instanceof Observable_1.Observable) {
+	        if (result._isScalar) {
+	            destination.next(result.value);
+	            destination.complete();
+	            return null;
+	        }
+	        else {
+	            return result.subscribe(destination);
+	        }
+	    }
+	    if (isArray_1.isArray(result)) {
+	        for (var i = 0, len = result.length; i < len && !destination.closed; i++) {
+	            destination.next(result[i]);
+	        }
+	        if (!destination.closed) {
+	            destination.complete();
+	        }
+	    }
+	    else if (isPromise_1.isPromise(result)) {
+	        result.then(function (value) {
+	            if (!destination.closed) {
+	                destination.next(value);
+	                destination.complete();
+	            }
+	        }, function (err) { return destination.error(err); })
+	            .then(null, function (err) {
+	            // Escaping the Promise trap: globally throw unhandled errors
+	            root_1.root.setTimeout(function () { throw err; });
+	        });
+	        return destination;
+	    }
+	    else if (typeof result[iterator_1.$$iterator] === 'function') {
+	        var iterator = result[iterator_1.$$iterator]();
+	        do {
+	            var item = iterator.next();
+	            if (item.done) {
+	                destination.complete();
+	                break;
+	            }
+	            destination.next(item.value);
+	            if (destination.closed) {
+	                break;
+	            }
+	        } while (true);
+	    }
+	    else if (typeof result[observable_1.$$observable] === 'function') {
+	        var obs = result[observable_1.$$observable]();
+	        if (typeof obs.subscribe !== 'function') {
+	            destination.error(new Error('invalid observable'));
+	        }
+	        else {
+	            return obs.subscribe(new InnerSubscriber_1.InnerSubscriber(outerSubscriber, outerValue, outerIndex));
+	        }
+	    }
+	    else {
+	        destination.error(new TypeError('unknown type returned'));
+	    }
+	    return null;
+	}
+	exports.subscribeToResult = subscribeToResult;
+
+
+/***/ },
+/* 57 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var Subscriber_1 = __webpack_require__(15);
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @ignore
+	 * @extends {Ignored}
+	 */
+	var InnerSubscriber = (function (_super) {
+	    __extends(InnerSubscriber, _super);
+	    function InnerSubscriber(parent, outerValue, outerIndex) {
+	        _super.call(this);
+	        this.parent = parent;
+	        this.outerValue = outerValue;
+	        this.outerIndex = outerIndex;
+	        this.index = 0;
+	    }
+	    InnerSubscriber.prototype._next = function (value) {
+	        this.parent.notifyNext(this.outerValue, value, this.outerIndex, this.index++, this);
+	    };
+	    InnerSubscriber.prototype._error = function (error) {
+	        this.parent.notifyError(error, this);
+	        this.unsubscribe();
+	    };
+	    InnerSubscriber.prototype._complete = function () {
+	        this.parent.notifyComplete(this);
+	        this.unsubscribe();
+	    };
+	    return InnerSubscriber;
+	}(Subscriber_1.Subscriber));
+	exports.InnerSubscriber = InnerSubscriber;
+
+
+/***/ },
+/* 58 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var subscribeToResult_1 = __webpack_require__(56);
+	var OuterSubscriber_1 = __webpack_require__(55);
+	/**
+	 * Projects each source value to an Observable which is merged in the output
+	 * Observable.
+	 *
+	 * <span class="informal">Maps each value to an Observable, then flattens all of
+	 * these inner Observables using {@link mergeAll}.</span>
+	 *
+	 * <img src="./img/mergeMap.png" width="100%">
+	 *
+	 * Returns an Observable that emits items based on applying a function that you
+	 * supply to each item emitted by the source Observable, where that function
+	 * returns an Observable, and then merging those resulting Observables and
+	 * emitting the results of this merger.
+	 *
+	 * @example <caption>Map and flatten each letter to an Observable ticking every 1 second</caption>
+	 * var letters = Rx.Observable.of('a', 'b', 'c');
+	 * var result = letters.mergeMap(x =>
+	 *   Rx.Observable.interval(1000).map(i => x+i)
+	 * );
+	 * result.subscribe(x => console.log(x));
+	 *
+	 * @see {@link concatMap}
+	 * @see {@link exhaustMap}
+	 * @see {@link merge}
+	 * @see {@link mergeAll}
+	 * @see {@link mergeMapTo}
+	 * @see {@link mergeScan}
+	 * @see {@link switchMap}
+	 *
+	 * @param {function(value: T, ?index: number): Observable} project A function
+	 * that, when applied to an item emitted by the source Observable, returns an
+	 * Observable.
+	 * @param {function(outerValue: T, innerValue: I, outerIndex: number, innerIndex: number): any} [resultSelector]
+	 * A function to produce the value on the output Observable based on the values
+	 * and the indices of the source (outer) emission and the inner Observable
+	 * emission. The arguments passed to this function are:
+	 * - `outerValue`: the value that came from the source
+	 * - `innerValue`: the value that came from the projected Observable
+	 * - `outerIndex`: the "index" of the value that came from the source
+	 * - `innerIndex`: the "index" of the value from the projected Observable
+	 * @param {number} [concurrent=Number.POSITIVE_INFINITY] Maximum number of input
+	 * Observables being subscribed to concurrently.
+	 * @return {Observable} An Observable that emits the result of applying the
+	 * projection function (and the optional `resultSelector`) to each item emitted
+	 * by the source Observable and merging the results of the Observables obtained
+	 * from this transformation.
+	 * @method mergeMap
+	 * @owner Observable
+	 */
+	function mergeMap(project, resultSelector, concurrent) {
+	    if (concurrent === void 0) { concurrent = Number.POSITIVE_INFINITY; }
+	    if (typeof resultSelector === 'number') {
+	        concurrent = resultSelector;
+	        resultSelector = null;
+	    }
+	    return this.lift(new MergeMapOperator(project, resultSelector, concurrent));
+	}
+	exports.mergeMap = mergeMap;
+	var MergeMapOperator = (function () {
+	    function MergeMapOperator(project, resultSelector, concurrent) {
+	        if (concurrent === void 0) { concurrent = Number.POSITIVE_INFINITY; }
+	        this.project = project;
+	        this.resultSelector = resultSelector;
+	        this.concurrent = concurrent;
+	    }
+	    MergeMapOperator.prototype.call = function (observer, source) {
+	        return source._subscribe(new MergeMapSubscriber(observer, this.project, this.resultSelector, this.concurrent));
+	    };
+	    return MergeMapOperator;
+	}());
+	exports.MergeMapOperator = MergeMapOperator;
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @ignore
+	 * @extends {Ignored}
+	 */
+	var MergeMapSubscriber = (function (_super) {
+	    __extends(MergeMapSubscriber, _super);
+	    function MergeMapSubscriber(destination, project, resultSelector, concurrent) {
+	        if (concurrent === void 0) { concurrent = Number.POSITIVE_INFINITY; }
+	        _super.call(this, destination);
+	        this.project = project;
+	        this.resultSelector = resultSelector;
+	        this.concurrent = concurrent;
+	        this.hasCompleted = false;
+	        this.buffer = [];
+	        this.active = 0;
+	        this.index = 0;
+	    }
+	    MergeMapSubscriber.prototype._next = function (value) {
+	        if (this.active < this.concurrent) {
+	            this._tryNext(value);
+	        }
+	        else {
+	            this.buffer.push(value);
+	        }
+	    };
+	    MergeMapSubscriber.prototype._tryNext = function (value) {
+	        var result;
+	        var index = this.index++;
+	        try {
+	            result = this.project(value, index);
+	        }
+	        catch (err) {
+	            this.destination.error(err);
+	            return;
+	        }
+	        this.active++;
+	        this._innerSub(result, value, index);
+	    };
+	    MergeMapSubscriber.prototype._innerSub = function (ish, value, index) {
+	        this.add(subscribeToResult_1.subscribeToResult(this, ish, value, index));
+	    };
+	    MergeMapSubscriber.prototype._complete = function () {
+	        this.hasCompleted = true;
+	        if (this.active === 0 && this.buffer.length === 0) {
+	            this.destination.complete();
+	        }
+	    };
+	    MergeMapSubscriber.prototype.notifyNext = function (outerValue, innerValue, outerIndex, innerIndex, innerSub) {
+	        if (this.resultSelector) {
+	            this._notifyResultSelector(outerValue, innerValue, outerIndex, innerIndex);
+	        }
+	        else {
+	            this.destination.next(innerValue);
+	        }
+	    };
+	    MergeMapSubscriber.prototype._notifyResultSelector = function (outerValue, innerValue, outerIndex, innerIndex) {
+	        var result;
+	        try {
+	            result = this.resultSelector(outerValue, innerValue, outerIndex, innerIndex);
+	        }
+	        catch (err) {
+	            this.destination.error(err);
+	            return;
+	        }
+	        this.destination.next(result);
+	    };
+	    MergeMapSubscriber.prototype.notifyComplete = function (innerSub) {
+	        var buffer = this.buffer;
+	        this.remove(innerSub);
+	        this.active--;
+	        if (buffer.length > 0) {
+	            this._next(buffer.shift());
+	        }
+	        else if (this.active === 0 && this.hasCompleted) {
+	            this.destination.complete();
+	        }
+	    };
+	    return MergeMapSubscriber;
+	}(OuterSubscriber_1.OuterSubscriber));
+	exports.MergeMapSubscriber = MergeMapSubscriber;
+
+
+/***/ },
+/* 59 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var Subscriber_1 = __webpack_require__(15);
+	/**
+	 * Applies an accumulator function over the source Observable, and returns the
+	 * accumulated result when the source completes, given an optional seed value.
+	 *
+	 * <span class="informal">Combines together all values emitted on the source,
+	 * using an accumulator function that knows how to join a new source value into
+	 * the accumulation from the past.</span>
+	 *
+	 * <img src="./img/reduce.png" width="100%">
+	 *
+	 * Like
+	 * [Array.prototype.reduce()](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduce),
+	 * `reduce` applies an `accumulator` function against an accumulation and each
+	 * value of the source Observable (from the past) to reduce it to a single
+	 * value, emitted on the output Observable. Note that `reduce` will only emit
+	 * one value, only when the source Observable completes. It is equivalent to
+	 * applying operator {@link scan} followed by operator {@link last}.
+	 *
+	 * Returns an Observable that applies a specified `accumulator` function to each
+	 * item emitted by the source Observable. If a `seed` value is specified, then
+	 * that value will be used as the initial value for the accumulator. If no seed
+	 * value is specified, the first item of the source is used as the seed.
+	 *
+	 * @example <caption>Count the number of click events that happened in 5 seconds</caption>
+	 * var clicksInFiveSeconds = Rx.Observable.fromEvent(document, 'click')
+	 *   .takeUntil(Rx.Observable.interval(5000));
+	 * var ones = clicksInFiveSeconds.mapTo(1);
+	 * var seed = 0;
+	 * var count = ones.reduce((acc, one) => acc + one, seed);
+	 * count.subscribe(x => console.log(x));
+	 *
+	 * @see {@link count}
+	 * @see {@link expand}
+	 * @see {@link mergeScan}
+	 * @see {@link scan}
+	 *
+	 * @param {function(acc: R, value: T): R} accumulator The accumulator function
+	 * called on each source value.
+	 * @param {R} [seed] The initial accumulation value.
+	 * @return {Observable<R>} An observable of the accumulated values.
+	 * @return {Observable<R>} An Observable that emits a single value that is the
+	 * result of accumulating the values emitted by the source Observable.
+	 * @method reduce
+	 * @owner Observable
+	 */
+	function reduce(accumulator, seed) {
+	    return this.lift(new ReduceOperator(accumulator, seed));
+	}
+	exports.reduce = reduce;
+	var ReduceOperator = (function () {
+	    function ReduceOperator(accumulator, seed) {
+	        this.accumulator = accumulator;
+	        this.seed = seed;
+	    }
+	    ReduceOperator.prototype.call = function (subscriber, source) {
+	        return source._subscribe(new ReduceSubscriber(subscriber, this.accumulator, this.seed));
+	    };
+	    return ReduceOperator;
+	}());
+	exports.ReduceOperator = ReduceOperator;
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @ignore
+	 * @extends {Ignored}
+	 */
+	var ReduceSubscriber = (function (_super) {
+	    __extends(ReduceSubscriber, _super);
+	    function ReduceSubscriber(destination, accumulator, seed) {
+	        _super.call(this, destination);
+	        this.accumulator = accumulator;
+	        this.hasValue = false;
+	        this.acc = seed;
+	        this.accumulator = accumulator;
+	        this.hasSeed = typeof seed !== 'undefined';
+	    }
+	    ReduceSubscriber.prototype._next = function (value) {
+	        if (this.hasValue || (this.hasValue = this.hasSeed)) {
+	            this._tryReduce(value);
+	        }
+	        else {
+	            this.acc = value;
+	            this.hasValue = true;
+	        }
+	    };
+	    ReduceSubscriber.prototype._tryReduce = function (value) {
+	        var result;
+	        try {
+	            result = this.accumulator(this.acc, value);
+	        }
+	        catch (err) {
+	            this.destination.error(err);
+	            return;
+	        }
+	        this.acc = result;
+	    };
+	    ReduceSubscriber.prototype._complete = function () {
+	        if (this.hasValue || this.hasSeed) {
+	            this.destination.next(this.acc);
+	        }
+	        this.destination.complete();
+	    };
+	    return ReduceSubscriber;
+	}(Subscriber_1.Subscriber));
+	exports.ReduceSubscriber = ReduceSubscriber;
+
+
+/***/ },
+/* 60 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var OuterSubscriber_1 = __webpack_require__(55);
+	var subscribeToResult_1 = __webpack_require__(56);
+	/**
+	 * Catches errors on the observable to be handled by returning a new observable or throwing an error.
+	 * @param {function} selector a function that takes as arguments `err`, which is the error, and `caught`, which
+	 *  is the source observable, in case you'd like to "retry" that observable by returning it again. Whatever observable
+	 *  is returned by the `selector` will be used to continue the observable chain.
+	 * @return {Observable} an observable that originates from either the source or the observable returned by the
+	 *  catch `selector` function.
+	 * @method catch
+	 * @owner Observable
+	 */
+	function _catch(selector) {
+	    var operator = new CatchOperator(selector);
+	    var caught = this.lift(operator);
+	    return (operator.caught = caught);
+	}
+	exports._catch = _catch;
+	var CatchOperator = (function () {
+	    function CatchOperator(selector) {
+	        this.selector = selector;
+	    }
+	    CatchOperator.prototype.call = function (subscriber, source) {
+	        return source._subscribe(new CatchSubscriber(subscriber, this.selector, this.caught));
+	    };
+	    return CatchOperator;
+	}());
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @ignore
+	 * @extends {Ignored}
+	 */
+	var CatchSubscriber = (function (_super) {
+	    __extends(CatchSubscriber, _super);
+	    function CatchSubscriber(destination, selector, caught) {
+	        _super.call(this, destination);
+	        this.selector = selector;
+	        this.caught = caught;
+	    }
+	    // NOTE: overriding `error` instead of `_error` because we don't want
+	    // to have this flag this subscriber as `isStopped`.
+	    CatchSubscriber.prototype.error = function (err) {
+	        if (!this.isStopped) {
+	            var result = void 0;
+	            try {
+	                result = this.selector(err, this.caught);
+	            }
+	            catch (err) {
+	                this.destination.error(err);
+	                return;
+	            }
+	            this.unsubscribe();
+	            this.destination.remove(this);
+	            subscribeToResult_1.subscribeToResult(this, result);
+	        }
+	    };
+	    return CatchSubscriber;
+	}(OuterSubscriber_1.OuterSubscriber));
+
+
+/***/ },
+/* 61 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var mergeAll_1 = __webpack_require__(54);
+	/**
+	 * Converts a higher-order Observable into a first-order Observable by
+	 * concatenating the inner Observables in order.
+	 *
+	 * <span class="informal">Flattens an Observable-of-Observables by putting one
+	 * inner Observable after the other.</span>
+	 *
+	 * <img src="./img/concatAll.png" width="100%">
+	 *
+	 * Joins every Observable emitted by the source (a higher-order Observable), in
+	 * a serial fashion. It subscribes to each inner Observable only after the
+	 * previous inner Observable has completed, and merges all of their values into
+	 * the returned observable.
+	 *
+	 * __Warning:__ If the source Observable emits Observables quickly and
+	 * endlessly, and the inner Observables it emits generally complete slower than
+	 * the source emits, you can run into memory issues as the incoming Observables
+	 * collect in an unbounded buffer.
+	 *
+	 * Note: `concatAll` is equivalent to `mergeAll` with concurrency parameter set
+	 * to `1`.
+	 *
+	 * @example <caption>For each click event, tick every second from 0 to 3, with no concurrency</caption>
+	 * var clicks = Rx.Observable.fromEvent(document, 'click');
+	 * var higherOrder = clicks.map(ev => Rx.Observable.interval(1000).take(4));
+	 * var firstOrder = higherOrder.concatAll();
+	 * firstOrder.subscribe(x => console.log(x));
+	 *
+	 * @see {@link combineAll}
+	 * @see {@link concat}
+	 * @see {@link concatMap}
+	 * @see {@link concatMapTo}
+	 * @see {@link exhaust}
+	 * @see {@link mergeAll}
+	 * @see {@link switch}
+	 * @see {@link zipAll}
+	 *
+	 * @return {Observable} An Observable emitting values from all the inner
+	 * Observables concatenated.
+	 * @method concatAll
+	 * @owner Observable
+	 */
+	function concatAll() {
+	    return this.lift(new mergeAll_1.MergeAllOperator(1));
+	}
+	exports.concatAll = concatAll;
+
+
+/***/ },
+/* 62 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var Subscriber_1 = __webpack_require__(15);
+	var EmptyError_1 = __webpack_require__(63);
+	/**
+	 * Emits only the first value (or the first value that meets some condition)
+	 * emitted by the source Observable.
+	 *
+	 * <span class="informal">Emits only the first value. Or emits only the first
+	 * value that passes some test.</span>
+	 *
+	 * <img src="./img/first.png" width="100%">
+	 *
+	 * If called with no arguments, `first` emits the first value of the source
+	 * Observable, then completes. If called with a `predicate` function, `first`
+	 * emits the first value of the source that matches the specified condition. It
+	 * may also take a `resultSelector` function to produce the output value from
+	 * the input value, and a `defaultValue` to emit in case the source completes
+	 * before it is able to emit a valid value. Throws an error if `defaultValue`
+	 * was not provided and a matching element is not found.
+	 *
+	 * @example <caption>Emit only the first click that happens on the DOM</caption>
+	 * var clicks = Rx.Observable.fromEvent(document, 'click');
+	 * var result = clicks.first();
+	 * result.subscribe(x => console.log(x));
+	 *
+	 * @example <caption>Emits the first click that happens on a DIV</caption>
+	 * var clicks = Rx.Observable.fromEvent(document, 'click');
+	 * var result = clicks.first(ev => ev.target.tagName === 'DIV');
+	 * result.subscribe(x => console.log(x));
+	 *
+	 * @see {@link filter}
+	 * @see {@link find}
+	 * @see {@link take}
+	 *
+	 * @throws {EmptyError} Delivers an EmptyError to the Observer's `error`
+	 * callback if the Observable completes before any `next` notification was sent.
+	 *
+	 * @param {function(value: T, index: number, source: Observable<T>): boolean} [predicate]
+	 * An optional function called with each item to test for condition matching.
+	 * @param {function(value: T, index: number): R} [resultSelector] A function to
+	 * produce the value on the output Observable based on the values
+	 * and the indices of the source Observable. The arguments passed to this
+	 * function are:
+	 * - `value`: the value that was emitted on the source.
+	 * - `index`: the "index" of the value from the source.
+	 * @param {R} [defaultValue] The default value emitted in case no valid value
+	 * was found on the source.
+	 * @return {Observable<T|R>} an Observable of the first item that matches the
+	 * condition.
+	 * @method first
+	 * @owner Observable
+	 */
+	function first(predicate, resultSelector, defaultValue) {
+	    return this.lift(new FirstOperator(predicate, resultSelector, defaultValue, this));
+	}
+	exports.first = first;
+	var FirstOperator = (function () {
+	    function FirstOperator(predicate, resultSelector, defaultValue, source) {
+	        this.predicate = predicate;
+	        this.resultSelector = resultSelector;
+	        this.defaultValue = defaultValue;
+	        this.source = source;
+	    }
+	    FirstOperator.prototype.call = function (observer, source) {
+	        return source._subscribe(new FirstSubscriber(observer, this.predicate, this.resultSelector, this.defaultValue, this.source));
+	    };
+	    return FirstOperator;
+	}());
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @ignore
+	 * @extends {Ignored}
+	 */
+	var FirstSubscriber = (function (_super) {
+	    __extends(FirstSubscriber, _super);
+	    function FirstSubscriber(destination, predicate, resultSelector, defaultValue, source) {
+	        _super.call(this, destination);
+	        this.predicate = predicate;
+	        this.resultSelector = resultSelector;
+	        this.defaultValue = defaultValue;
+	        this.source = source;
+	        this.index = 0;
+	        this.hasCompleted = false;
+	    }
+	    FirstSubscriber.prototype._next = function (value) {
+	        var index = this.index++;
+	        if (this.predicate) {
+	            this._tryPredicate(value, index);
+	        }
+	        else {
+	            this._emit(value, index);
+	        }
+	    };
+	    FirstSubscriber.prototype._tryPredicate = function (value, index) {
+	        var result;
+	        try {
+	            result = this.predicate(value, index, this.source);
+	        }
+	        catch (err) {
+	            this.destination.error(err);
+	            return;
+	        }
+	        if (result) {
+	            this._emit(value, index);
+	        }
+	    };
+	    FirstSubscriber.prototype._emit = function (value, index) {
+	        if (this.resultSelector) {
+	            this._tryResultSelector(value, index);
+	            return;
+	        }
+	        this._emitFinal(value);
+	    };
+	    FirstSubscriber.prototype._tryResultSelector = function (value, index) {
+	        var result;
+	        try {
+	            result = this.resultSelector(value, index);
+	        }
+	        catch (err) {
+	            this.destination.error(err);
+	            return;
+	        }
+	        this._emitFinal(result);
+	    };
+	    FirstSubscriber.prototype._emitFinal = function (value) {
+	        var destination = this.destination;
+	        destination.next(value);
+	        destination.complete();
+	        this.hasCompleted = true;
+	    };
+	    FirstSubscriber.prototype._complete = function () {
+	        var destination = this.destination;
+	        if (!this.hasCompleted && typeof this.defaultValue !== 'undefined') {
+	            destination.next(this.defaultValue);
+	            destination.complete();
+	        }
+	        else if (!this.hasCompleted) {
+	            destination.error(new EmptyError_1.EmptyError);
+	        }
+	    };
+	    return FirstSubscriber;
+	}(Subscriber_1.Subscriber));
+
+
+/***/ },
+/* 63 */
+/***/ function(module, exports) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	/**
+	 * An error thrown when an Observable or a sequence was queried but has no
+	 * elements.
+	 *
+	 * @see {@link first}
+	 * @see {@link last}
+	 * @see {@link single}
+	 *
+	 * @class EmptyError
+	 */
+	var EmptyError = (function (_super) {
+	    __extends(EmptyError, _super);
+	    function EmptyError() {
+	        var err = _super.call(this, 'no elements in sequence');
+	        this.name = err.name = 'EmptyError';
+	        this.stack = err.stack;
+	        this.message = err.message;
+	    }
+	    return EmptyError;
+	}(Error));
+	exports.EmptyError = EmptyError;
+
+
+/***/ },
+/* 64 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var PromiseObservable_1 = __webpack_require__(41);
+	exports.fromPromise = PromiseObservable_1.PromiseObservable.create;
+
+
+/***/ },
+/* 65 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var Subscriber_1 = __webpack_require__(15);
+	var EmptyError_1 = __webpack_require__(63);
+	/**
+	 * Returns an Observable that emits only the last item emitted by the source Observable.
+	 * It optionally takes a predicate function as a parameter, in which case, rather than emitting
+	 * the last item from the source Observable, the resulting Observable will emit the last item
+	 * from the source Observable that satisfies the predicate.
+	 *
+	 * <img src="./img/last.png" width="100%">
+	 *
+	 * @throws {EmptyError} Delivers an EmptyError to the Observer's `error`
+	 * callback if the Observable completes before any `next` notification was sent.
+	 * @param {function} predicate - the condition any source emitted item has to satisfy.
+	 * @return {Observable} an Observable that emits only the last item satisfying the given condition
+	 * from the source, or an NoSuchElementException if no such items are emitted.
+	 * @throws - Throws if no items that match the predicate are emitted by the source Observable.
+	 * @method last
+	 * @owner Observable
+	 */
+	function last(predicate, resultSelector, defaultValue) {
+	    return this.lift(new LastOperator(predicate, resultSelector, defaultValue, this));
+	}
+	exports.last = last;
+	var LastOperator = (function () {
+	    function LastOperator(predicate, resultSelector, defaultValue, source) {
+	        this.predicate = predicate;
+	        this.resultSelector = resultSelector;
+	        this.defaultValue = defaultValue;
+	        this.source = source;
+	    }
+	    LastOperator.prototype.call = function (observer, source) {
+	        return source._subscribe(new LastSubscriber(observer, this.predicate, this.resultSelector, this.defaultValue, this.source));
+	    };
+	    return LastOperator;
+	}());
+	/**
+	 * We need this JSDoc comment for affecting ESDoc.
+	 * @ignore
+	 * @extends {Ignored}
+	 */
+	var LastSubscriber = (function (_super) {
+	    __extends(LastSubscriber, _super);
+	    function LastSubscriber(destination, predicate, resultSelector, defaultValue, source) {
+	        _super.call(this, destination);
+	        this.predicate = predicate;
+	        this.resultSelector = resultSelector;
+	        this.defaultValue = defaultValue;
+	        this.source = source;
+	        this.hasValue = false;
+	        this.index = 0;
+	        if (typeof defaultValue !== 'undefined') {
+	            this.lastValue = defaultValue;
+	            this.hasValue = true;
+	        }
+	    }
+	    LastSubscriber.prototype._next = function (value) {
+	        var index = this.index++;
+	        if (this.predicate) {
+	            this._tryPredicate(value, index);
+	        }
+	        else {
+	            if (this.resultSelector) {
+	                this._tryResultSelector(value, index);
+	                return;
+	            }
+	            this.lastValue = value;
+	            this.hasValue = true;
+	        }
+	    };
+	    LastSubscriber.prototype._tryPredicate = function (value, index) {
+	        var result;
+	        try {
+	            result = this.predicate(value, index, this.source);
+	        }
+	        catch (err) {
+	            this.destination.error(err);
+	            return;
+	        }
+	        if (result) {
+	            if (this.resultSelector) {
+	                this._tryResultSelector(value, index);
+	                return;
+	            }
+	            this.lastValue = value;
+	            this.hasValue = true;
+	        }
+	    };
+	    LastSubscriber.prototype._tryResultSelector = function (value, index) {
+	        var result;
+	        try {
+	            result = this.resultSelector(value, index);
+	        }
+	        catch (err) {
+	            this.destination.error(err);
+	            return;
+	        }
+	        this.lastValue = result;
+	        this.hasValue = true;
+	    };
+	    LastSubscriber.prototype._complete = function () {
+	        var destination = this.destination;
+	        if (this.hasValue) {
+	            destination.next(this.lastValue);
+	            destination.complete();
+	        }
+	        else {
+	            destination.error(new EmptyError_1.EmptyError);
+	        }
+	    };
+	    return LastSubscriber;
+	}(Subscriber_1.Subscriber));
+
+
+/***/ },
+/* 66 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __extends = (this && this.__extends) || function (d, b) {
+	    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+	    function __() { this.constructor = d; }
+	    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+	};
+	var Subject_1 = __webpack_require__(11);
+	var ObjectUnsubscribedError_1 = __webpack_require__(26);
+	/**
+	 * @class BehaviorSubject<T>
+	 */
+	var BehaviorSubject = (function (_super) {
+	    __extends(BehaviorSubject, _super);
+	    function BehaviorSubject(_value) {
+	        _super.call(this);
+	        this._value = _value;
+	    }
+	    Object.defineProperty(BehaviorSubject.prototype, "value", {
+	        get: function () {
+	            return this.getValue();
+	        },
+	        enumerable: true,
+	        configurable: true
+	    });
+	    BehaviorSubject.prototype._subscribe = function (subscriber) {
+	        var subscription = _super.prototype._subscribe.call(this, subscriber);
+	        if (subscription && !subscription.closed) {
+	            subscriber.next(this._value);
+	        }
+	        return subscription;
+	    };
+	    BehaviorSubject.prototype.getValue = function () {
+	        if (this.hasError) {
+	            throw this.thrownError;
+	        }
+	        else if (this.closed) {
+	            throw new ObjectUnsubscribedError_1.ObjectUnsubscribedError();
+	        }
+	        else {
+	            return this._value;
+	        }
+	    };
+	    BehaviorSubject.prototype.next = function (value) {
+	        _super.prototype.next.call(this, this._value = value);
+	    };
+	    return BehaviorSubject;
+	}(Subject_1.Subject));
+	exports.BehaviorSubject = BehaviorSubject;
+
+
+/***/ },
+/* 67 */
+/***/ function(module, exports) {
+
+	module.exports = "<router-outlet></router-outlet>"
+
+/***/ },
+/* 68 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+	var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+	    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+	    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+	    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+	    return c > 3 && r && Object.defineProperty(target, key, r), r;
+	};
+	var __metadata = (this && this.__metadata) || function (k, v) {
+	    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+	};
+	var core_1 = __webpack_require__(10);
+	var FeedComponent = (function () {
+	    function FeedComponent() {
+	    }
+	    return FeedComponent;
+	}());
+	FeedComponent = __decorate([
+	    core_1.Component({
+	        selector: 'feed-component',
+	        template: __webpack_require__(69)
+	    }),
+	    __metadata("design:paramtypes", [])
+	], FeedComponent);
+	exports.FeedComponent = FeedComponent;
+
+
+/***/ },
+/* 69 */
+/***/ function(module, exports) {
+
+	module.exports = "<header-component></header-component><p>Feed Component</p>"
+
+/***/ },
+/* 70 */
+/***/ function(module, exports) {
+
+	module.exports = "<header-component></header-component><p>Profile Component</p>"
 
 /***/ }
 /******/ ]);
