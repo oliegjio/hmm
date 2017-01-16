@@ -1,0 +1,28 @@
+include ../setup/_config.pug
+
++b.navigation-menu
+    +e.UL.list
+        +e.LI.list-element
+            +e.A(routerLink='/profile').link
+                +e.I(aria-hidden='true').link-icon.fa.fa-home
+                +e.P.link-text My Profile
+        +e.LI.list-element
+            +e.A(routerLink='/feed').link
+                +e.I(aria-hidden='true').link-icon.fa.fa-newspaper-o
+                +e.P.link-text News
+        +e.LI.list-element
+            +e.A(routerLink='/feed').link
+                +e.I(aria-hidden='true').link-icon.fa.fa-comments
+                +e.P.link-text Messages
+        +e.LI.list-element
+            +e.A(routerLink='/feed').link
+                +e.I(aria-hidden='true').link-icon.fa.fa-user
+                +e.P.link-text Friends
+        +e.LI.list-element
+            +e.A(routerLink='/feed').link
+                +e.I(aria-hidden='true').link-icon.fa.fa-camera
+                +e.P.link-text Photos
+        +e.LI.list-element
+            +e.A(routerLink='/feed').link
+                +e.I(aria-hidden='true').link-icon.fa.fa-music
+                +e.P.link-text Audios

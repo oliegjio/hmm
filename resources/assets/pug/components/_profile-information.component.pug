@@ -1,0 +1,27 @@
+include ../setup/_config.pug
+
++b.profile-information-component
+    +e.header
+        +e.P.user-name John Doe
+        +e.P.status Time is money
+    +e.information.row
+        +e.TABLE.table
+            +e.TR.row
+                +e.TD.cell
+                    +e.P.info-name Age
+                +e.TD.cell
+                    +e.P.info-value 28
+            +e.TR.row
+                +e.TD.cell
+                    +e.P.info-name City
+                +e.TD.cell
+                    +e.P.info-value Sidney
+            +e.TR.row
+                +e.TD.cell
+                    +e.P.info-name Languages
+                +e.TD.cell
+                    +e.P.info-value English, Japanese
+    +e.footer.row.around-xs
+        like-button-component
+        like-button-component
+        like-button-component

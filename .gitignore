@@ -1,4 +1,5 @@
 /node_modules
+/bower_components
 /public/storage
 /public/vendor
 /public/fonts/**
@@ -11,3 +12,4 @@ Homestead.yaml
 .env
 **/*.map
 bundle.js.map
+/public/js/bundle.js.map
