@@ -10,11 +10,13 @@
         height: 100px
         width: 100%
         padding: 20px
+        margin-left: 0 !important
     +element('content')
         width: 100%
         box-sizing: border-box
         padding: 0 20px 20px 20px
-        font-size: 14px
+        font-size: $font__size--2
+        color: $color__text--primary
     +element('footer')
         width: 100%
         border-top: 0.5px solid $color__primary--light
@@ -22,7 +24,6 @@
     +element('avatar')
         border-radius: 100px
         display: inline-block
-        margin-left: 15px
     +element('user-name')
         font-family: Roboto-Medium
         text-decoration: none
@@ -31,5 +32,5 @@
         display: inline-block
         margin-left: 20px
     +element('date')
-        color: darkgrey
+        color: $color__text--secondary
         font-size: 12px

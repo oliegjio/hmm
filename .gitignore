@@ -10,3 +10,4 @@ Homestead.yaml
 /typings
 .env
 **/*.map
+bundle.js.map
