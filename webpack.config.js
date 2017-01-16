@@ -19,16 +19,16 @@ module.exports = {
         loaders: [
             // All files with a '.ts' extension will be handled by 'awesome-typescript-loader'.
             { test: /\.ts$/, loader: "awesome-typescript-loader" },
-            // Allow to require sass/scss files to Angular 2 Component (Precompile them)
+            // Allow to require '.sass/.scss' files to Angular 2 Component (Precompile them)
             {
                 test: /\.(scss|sass)$/,
                 exclude: /node_modules/,
                 loader: 'raw-loader!sass-loader'
             },
-            // Allow to require jade files to Angular 2 Comopnent (Precompile them)
+            // Allow to require '.pug' files to Angular 2 Comopnent (Precompile them)
             {
-                test: /\.jade$/,
-                loader: 'raw-loader!jade-html-loader'
+                test: /\.pug$/,
+                loader: 'raw-loader!pug-html-loader?exports=false'
             }
         ],
 

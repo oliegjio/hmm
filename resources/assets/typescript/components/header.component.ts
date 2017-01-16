@@ -2,7 +2,7 @@ import { Component } from '@angular/core'
 
 @Component({
     selector: 'header-component',
-    template: require('../../jade/_header.component.jade'),
+    template: require('../../jade/_header.component.pug'),
     styles: [ require('../../sass/components/_header.component.sass') ]
 })
 export class HeaderComponent {}

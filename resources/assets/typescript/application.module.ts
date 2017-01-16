@@ -9,11 +9,16 @@ import { FeedComponent } from './components/feed.component'
 import { NavigationMenuComponent } from './components/navigation-menu.component'
 import { PostComponent } from './components/post.component'
 import { LikeButtonComponent } from './components/like-button.component'
+import { ProfileInformationComponent } from './components/profile-information.component'
 
 const applicationRoutes: Routes = [
     {
         path: 'profile',
         component: ProfileComponent
+    },
+    {
+        path: 'feed',
+        component: FeedComponent
     },
     {
         path: '',
@@ -37,7 +42,8 @@ const applicationRoutes: Routes = [
         FeedComponent,
         NavigationMenuComponent,
         PostComponent,
-        LikeButtonComponent
+        LikeButtonComponent,
+        ProfileInformationComponent
     ],
     bootstrap: [ ApplicationComponent ]
 })

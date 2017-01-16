@@ -13,6 +13,10 @@
 
 Auth::routes();
 
+// REMOVE IN FUTURE
+Route::get('{any}', 'HomeController@index')
+    ->where('any', '.*');
+
 Route::get('/', 'HomeController@index');
 Route::get('/home', 'HomeController@index');
 
