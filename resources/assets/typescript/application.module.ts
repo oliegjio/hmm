@@ -7,6 +7,7 @@ import { HeaderComponent } from './components/header.component'
 import { ProfileComponent } from './components/profile.component'
 import { FeedComponent } from './components/feed.component'
 import { NavigationMenuComponent } from './components/navigation-menu.component'
+import { PostComponent } from './components/post.component'
 
 const applicationRoutes: Routes = [
     {
@@ -33,7 +34,8 @@ const applicationRoutes: Routes = [
         HeaderComponent,
         ProfileComponent,
         FeedComponent,
-        NavigationMenuComponent
+        NavigationMenuComponent,
+        PostComponent
     ],
     bootstrap: [ ApplicationComponent ]
 })

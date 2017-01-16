@@ -44,5 +44,9 @@ module.exports = {
         ],
         extensions: ['', '.js', '.ts'],
         moduleDirectories: ['node_modules']
+    },
+
+    stats: {
+        warnings: false
     }
 };
