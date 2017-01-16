@@ -8,6 +8,7 @@ import { ProfileComponent } from './components/profile.component'
 import { FeedComponent } from './components/feed.component'
 import { NavigationMenuComponent } from './components/navigation-menu.component'
 import { PostComponent } from './components/post.component'
+import { LikeButtonComponent } from './components/like-button.component'
 
 const applicationRoutes: Routes = [
     {
@@ -35,7 +36,8 @@ const applicationRoutes: Routes = [
         ProfileComponent,
         FeedComponent,
         NavigationMenuComponent,
-        PostComponent
+        PostComponent,
+        LikeButtonComponent
     ],
     bootstrap: [ ApplicationComponent ]
 })

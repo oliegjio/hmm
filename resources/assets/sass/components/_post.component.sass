@@ -2,25 +2,23 @@
 @import '../setup/_variables'
 
 .post-component
-    // background-color: #FAFAFA
-    border-radius: 5px
-    overflow: hidden
+    border-radius: $border-radius__main
     border: 0.5px solid $color__primary--light
-    height: 700px
+    overflow: hidden
     flex-direction: column
     +element('user-info')
         height: 100px
         width: 100%
         padding: 20px
     +element('content')
-        height: 500px
         width: 100%
-        padding: 15px
-        background-color: cyan
+        box-sizing: border-box
+        padding: 0 20px 20px 20px
+        font-size: 14px
     +element('footer')
-        height: 100px
-        background-color: orange
         width: 100%
+        border-top: 0.5px solid $color__primary--light
+        padding: 10px
     +element('avatar')
         border-radius: 100px
         display: inline-block
@@ -34,4 +32,4 @@
         margin-left: 20px
     +element('date')
         color: darkgrey
-        font-size: 14px
+        font-size: 12px

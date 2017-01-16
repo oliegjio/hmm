@@ -1,0 +1,19 @@
+@import '../setup/_mixins'
+@import '../setup/_variables'
+
+.like-button-component 
+    display: inline-block
+    padding: 5px
+    border-radius: $border-radius__main
+    +element('link')
+        color: $color__primary
+        font-family: Roboto-Medium
+        text-decoration: none
+        margin: 0 8px
+    +element('icon')
+        color: $color__primary--light
+    +element('cout')
+        color: $color__primary--dark
+        font-family: Roboto-Bold
+    &:hover
+        background-color: $color__grey
