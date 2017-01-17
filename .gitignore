@@ -13,3 +13,4 @@ Homestead.yaml
 **/*.map
 bundle.js.map
 /public/js/bundle.js.map
+npm-debug.log
