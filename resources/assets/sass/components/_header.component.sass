@@ -13,15 +13,15 @@ $_header-compoennt__height: 60px
     position: fixed
     top: 0
     left: 0
-    +element('offset')
+    +e('offset')
         height: 100%
         width: $main-column__width
-    +element('logo')
+    +e('logo')
         height: 18px
-    +element('search-icon')
+    +e('search-icon')
         font-size: $_header-component__icons--size
         color: $_header-component__icons--color
-    +element('search-bar')
+    +e('search-bar')
         font-family: Roboto-Medium
         border: none
         border-radius: 100px
@@ -37,7 +37,7 @@ $_header-compoennt__height: 60px
             background-color: white
             color: $color__primary--light
             outline: none
-    +element('action-button')
+    +e('action-button')
         color: $_header-component__icons--color
         font-size: $_header-component__icons--size
         height: 100%
@@ -46,16 +46,17 @@ $_header-compoennt__height: 60px
         text-align: center
         &:hover
             background-color: $color__primary--light
-    +element('profile-button')
+    +e('profile-button')
         font-family: Roboto-Bold
         letter-spacing: 1px
         color: white
+        padding: 0 10px
         text-decoration: none
         &:hover
             background-color: $color__primary--light
-    +element('avatar')
+    +e('avatar')
         border-radius: 100px
         width: 40px
         height: 40px
-    +element('user-name')
+    +e('user-name')
         margin-right: 10px

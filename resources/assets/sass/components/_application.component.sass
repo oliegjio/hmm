@@ -1,9 +1,8 @@
-@import '../../../../node_modules/bourbon/app/assets/stylesheets/_bourbon'
-@import '../../../../node_modules/flexboxgrid/dist/flexboxgrid.min'
-@import '../../../../node_modules/font-awesome/scss/font-awesome'
-
 @import '../setup/_variables'
 @import '../setup/_mixins'
+
+@import '../../../../node_modules/flexboxgrid/dist/flexboxgrid.min'
+@import '../../../../node_modules/font-awesome/scss/font-awesome'
 
 +font-face('FontAwesome', 'fonts/font-awesome/fontawesome-webfont')
 +font-face('Roboto-Regular', 'fonts/Roboto/Roboto-Regular')
@@ -26,5 +25,5 @@ body, html
     margin: (60px + 40) auto 0 auto
     overflow: hidden
     width: $main-column__width
-    +element('sidebar')
-    +element('content')
+    +e('sidebar')
+    +e('content')

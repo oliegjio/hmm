@@ -2,6 +2,7 @@ import { NgModule } from '@angular/core'
 import { BrowserModule } from '@angular/platform-browser'
 import { RouterModule, Routes } from '@angular/router'
 
+import { routing } from './application.routing'
 import { ApplicationComponent } from './components/application.component'
 import { HeaderComponent } from './components/header.component'
 import { ProfileComponent } from './components/profile.component'
@@ -10,30 +11,14 @@ import { NavigationMenuComponent } from './components/navigation-menu.component'
 import { PostComponent } from './components/post.component'
 import { LikeButtonComponent } from './components/like-button.component'
 import { ProfileInformationComponent } from './components/profile-information.component'
+import { LoginComponent } from './components/login.component'
 
-const applicationRoutes: Routes = [
-    {
-        path: 'profile',
-        component: ProfileComponent
-    },
-    {
-        path: 'feed',
-        component: FeedComponent
-    },
-    {
-        path: '',
-        component: FeedComponent
-    },
-    {
-        path: '**',
-        component: FeedComponent
-    }
-]
+
 
 @NgModule({
     imports: [
         BrowserModule,
-        RouterModule.forRoot(applicationRoutes)
+        routing
     ],
     declarations: [
         ApplicationComponent,
@@ -43,7 +28,8 @@ const applicationRoutes: Routes = [
         NavigationMenuComponent,
         PostComponent,
         LikeButtonComponent,
-        ProfileInformationComponent
+        ProfileInformationComponent,
+        LoginComponent
     ],
     bootstrap: [ ApplicationComponent ]
 })

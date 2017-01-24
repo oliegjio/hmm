@@ -11,7 +11,16 @@
 |
 */
 
-Auth::routes();
+// Auth::routes();
+
+Route::group(['prefix' => 'api'], function() {
+    Route::resource(
+        'authenticate',
+        'AuthenticateController',
+        ['only' => 'index']
+    );
+    Route::post('authenticate', 'AuthenticateController@authenticate');
+});
 
 // REMOVE IN FUTURE
 Route::get('{any}', 'HomeController@index')

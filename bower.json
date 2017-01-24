@@ -1,0 +1,23 @@
+{
+  "name": "hmm",
+  "description": "Description",
+  "main": "gulpfile.js",
+  "authors": [
+    "oliegjio"
+  ],
+  "license": "ISC",
+  "keywords": [
+    "Hmm"
+  ],
+  "homepage": "https://github.com/oliegjio/hmm",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+    "bemto": "^2.1.0"
+  }
+}

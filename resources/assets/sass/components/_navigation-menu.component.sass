@@ -4,25 +4,26 @@
 $_navigation-menu__icon--size: 19px
 
 .navigation-menu
-    +element('link')
+    width: 200px
+    +e('link')
         color: $color__primary--dark
         text-decoration: none
         display: block
         padding: 8px
         height: $_navigation-menu__icon--size
         border-radius: $border-radius__main
-        width: 80%
+        width: 90%
         &:hover
             background-color: $color__grey
-    +element('link-icon')
+    +e('link-icon')
         font-size: $_navigation-menu__icon--size
         color: $color__primary--light
         float: left
-    +element('link-text')
+    +e('link-text')
         font-family: Roboto-Light
         line-height: $_navigation-menu__icon--size
         margin-left: 40px
-    +element('list-element')
+    +e('list-e')
         margin: 5px 0
-    +element('list')
+    +e('list')
         list-style: none
