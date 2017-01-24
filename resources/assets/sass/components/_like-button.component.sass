@@ -5,6 +5,7 @@
     display: inline-block
     padding: 5px 8px
     border-radius: $border-radius__main
+    +transition(all $animation__time--medium ease)
     +e('link')
         color: $color__primary
         font-family: Roboto-Medium
@@ -17,3 +18,4 @@
         font-family: Roboto-Bold
     &:hover
         background-color: $color__grey
+        cursor: pointer

@@ -31,9 +31,10 @@ $_header-compoennt__height: 60px
         color: white
         padding-left: 15px
         background-color: $color__primary--light
+        +transition(all 0.2s ease)
         &::-webkit-input-placeholder
             color: white
-        &:focus
+        &:focus, &:hover
             background-color: white
             color: $color__primary--light
             outline: none
@@ -44,6 +45,7 @@ $_header-compoennt__height: 60px
         line-height: $_header-compoennt__height
         width: $_header-compoennt__height
         text-align: center
+        +transition(all $animation__time--medium ease)
         &:hover
             background-color: $color__primary--light
     +e('profile-button')
@@ -52,6 +54,7 @@ $_header-compoennt__height: 60px
         color: white
         padding: 0 10px
         text-decoration: none
+        +transition(all $animation__time--medium)
         &:hover
             background-color: $color__primary--light
     +e('avatar')

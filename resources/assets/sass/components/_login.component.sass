@@ -12,7 +12,7 @@
     +e('entry')
         box-sizing: border-box
         outline: none
-        border: 2px solid $color__primary--light
+        border: 2px solid $color__primary
         border-radius: 100px
         height: 30px
         width: 100%
@@ -20,6 +20,9 @@
         font-size: $font__size--5
         font-family: Roboto-Black
         color: $color__primary--dark
+        +transition(all 0.2s ease)
+        &:focus
+            border: 2px solid $color__primary--light
     +e('button')
         outline: none
         border: 2px solid $color__primary--light

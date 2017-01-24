@@ -14,10 +14,6 @@ const APPLICATION_ROUTES: Routes = [
         component: FeedComponent
     },
     {
-        path: 'login',
-        component: LoginComponent
-    },
-    {
         path: '',
         component: FeedComponent
     },
