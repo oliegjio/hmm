@@ -2,11 +2,12 @@ include ../setup/_config.pug
 
 +b.login-component
     +e.P.label E-Mail
-    +e.INPUT(type="email", name="email").entry
+    +e.INPUT(type="email", name="email", [(ngModel)]="email").entry
     +e.P.label Password
-    +e.INPUT(type="password", name="password").entry
+    +e.INPUT(type="password", name="password", [(ngModel)]="password").entry
     br
+    p {{ email }} | {{ password }}
     br
-    +e.INPUT(type="button", value="Login").button
-    +e.INPUT(type="button", value="Register").button
+    +e.INPUT(type="button", value="Login", (click)="login()").button
+    +e.INPUT(type="button", value="Register", (click)="toggleRegister()").button
     +e.A(href="/feed").forgot Forgot Password?
