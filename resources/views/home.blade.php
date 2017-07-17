@@ -8,7 +8,7 @@
         <title>Hmm...</title>
 
     </head>
-    <base href="/hmm/public/">
+    <base href="/">
     <body>
 
         <application>Loading...</application>
