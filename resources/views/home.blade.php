@@ -8,7 +8,7 @@
         <title>Hmm...</title>
 
     </head>
-    <base href="/">
+    <base href="/~archie/hmm/public/">
     <body>
 
         <application>Loading...</application>

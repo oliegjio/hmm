@@ -14,14 +14,18 @@ import 'rxjs/add/operator/catch'
 export class LoginComponent {
 
     private email: string
+    private name: string
     private password: string
-    private authenticateUrl: string = 'api/authenticate'
-    private data;
+    private signupUrl: string = '/api/signup'
+    private signinUrl: string = '/api/signin'
+    private data
 
     constructor(private http: Http) {}
 
-    private login(): Observable<any> {
-        return this.http.post(this.authenticateUrl, {
+    private signup(): Observable<any> {
+        console.log(this.email, this.name, this.password)
+        return this.http.post(this.signupUrl, {
+            name: this.name,
             email: this.email,
             password: this.password
         })
@@ -29,8 +33,15 @@ export class LoginComponent {
             .catch((error: any) => Observable.throw(error.json().error || 'Server Error'))
     }
 
-    private toggleRegister() {
-        console.log(this.data);
+    private signin() {
+        console.log(this.email, this.name, this.password)
+        return this.http.post(this.signupUrl, {
+            name: this.name,
+            email: this.email,
+            password: this.password
+        })
+            .map((response: Response) => response.json())
+            .catch((error: any) => Observable.throw(error.json().error || 'Server Error'))
     }
 
 }

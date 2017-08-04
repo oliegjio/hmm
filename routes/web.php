@@ -14,12 +14,15 @@
 // Auth::routes();
 
 Route::group(['prefix' => 'api'], function() {
-    Route::resource(
-        'authenticate',
-        'AuthenticateController',
-        ['only' => 'index']
-    );
-    Route::post('authenticate', 'AuthenticateController@authenticate');
+    // Route::resource(
+    //     'authenticate',
+    //     'AuthenticateController',
+    //     ['only' => 'index']
+    // );
+    // Route::post('authenticate', 'AuthenticateController@authenticate');
+
+    Route::post('/signup', 'UserController@signup');
+    Route::post('/signin', 'UserController@signin');
 });
 
 // REMOVE IN FUTURE
